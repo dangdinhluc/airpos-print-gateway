@@ -54,7 +54,8 @@ printf '%s  %s\n' "$expected" "$download_dir/$package_name" | sha256sum --check 
 "${root_command[@]}" dpkg --install "$download_dir/$package_name" \
   || "${root_command[@]}" apt-get install -f -y
 "${root_command[@]}" systemctl daemon-reload
-"${root_command[@]}" systemctl enable --now airpos-print-gateway.service
+"${root_command[@]}" systemctl enable airpos-print-gateway.service
+"${root_command[@]}" systemctl restart airpos-print-gateway.service
 
 healthy=false
 attempt=0

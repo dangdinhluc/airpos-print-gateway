@@ -25,5 +25,6 @@ chown -R airpos-gateway:airpos-gateway /var/lib/airpos-print-gateway
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload
-  systemctl enable --now airpos-print-gateway.service
+  systemctl enable airpos-print-gateway.service
+  systemctl restart airpos-print-gateway.service
 fi
