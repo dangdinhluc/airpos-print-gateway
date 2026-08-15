@@ -133,7 +133,10 @@ class GatewayWorker {
         'Gateway chưa được provision; mở GUI để đăng ký gateway.',
       );
     }
-    final heartbeat = await _api.heartbeat(config.appVersion);
+    final heartbeat = await _api.heartbeat(
+      config.appVersion,
+      metadata: buildGatewayHeartbeatMetadata(printers),
+    );
     if (!heartbeat.ok) {
       throw StateError('heartbeat failed: ${heartbeat.detail ?? 'unknown'}');
     }
@@ -216,6 +219,37 @@ class GatewayWorker {
     }
     return scored.first.printer;
   }
+}
+
+Map<String, Object?> buildGatewayHeartbeatMetadata(
+  Iterable<PrinterProfile> printers,
+) {
+  final localPrinters = <Map<String, Object?>>[];
+  final roles = <String>{};
+  for (final printer in printers) {
+    if (!printer.enabled) continue;
+    final localRole = printer.role.trim().toLowerCase();
+    if (localRole.isEmpty) continue;
+    final publishedRole = localRole == 'receipt' ? 'pos' : localRole;
+    roles.add(publishedRole);
+    localPrinters.add(<String, Object?>{
+      'id': printer.id,
+      'name': printer.name,
+      'role': publishedRole,
+      'station_name': printer.station.isEmpty ? null : printer.station,
+      'area_id': printer.area.isEmpty ? null : printer.area,
+      'connection': printer.connectionType.value,
+      'protocol': printer.protocol.value,
+      'ip': printer.host,
+      'port': printer.port,
+      'paper_width': printer.paperWidthMm,
+    });
+  }
+  return <String, Object?>{
+    'platform': 'ubuntu',
+    'printer_roles': roles.toList(growable: false),
+    'local_printers': localPrinters,
+  };
 }
 
 String _text(Object? value) => value?.toString().trim() ?? '';

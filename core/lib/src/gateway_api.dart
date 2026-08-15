@@ -156,14 +156,19 @@ class SupabaseGatewayClient {
     }
   }
 
-  Future<GatewayHeartbeatResult> heartbeat(String appVersion) async {
+  Future<GatewayHeartbeatResult> heartbeat(
+    String appVersion, {
+    Map<String, Object?> metadata = const <String, Object?>{
+      'platform': 'ubuntu',
+    },
+  }) async {
     try {
       await _rpc('print_gateway_heartbeat', <String, Object?>{
         'p_tenant_id': tenantId,
         'p_gateway_id': gatewayId,
         'p_gateway_token': gatewayToken,
         'p_app_version': appVersion,
-        'p_metadata': const <String, Object?>{'platform': 'ubuntu'},
+        'p_metadata': metadata,
       });
       return const GatewayHeartbeatResult(ok: true);
     } catch (error) {
