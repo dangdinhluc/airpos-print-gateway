@@ -8,13 +8,33 @@ import 'cups.dart';
 import 'escpos.dart';
 import 'gateway_api.dart';
 import 'models.dart';
+import 'print_profile.dart';
 import 'runtime_settings.dart';
 import 'runtime_status.dart';
 import 'worker.dart';
 
 typedef GatewaySnapshotReader = GatewayRuntimeSnapshot Function();
 typedef GatewayClientFactory =
-    SupabaseGatewayClient Function(GatewayRuntimeSettings settings);
+    SupabaseGatewayClient Function(
+      GatewayRuntimeSettings settings, {
+      String tenantId,
+      String gatewayId,
+      String gatewayToken,
+    });
+
+SupabaseGatewayClient _defaultGatewayClientFactory(
+  GatewayRuntimeSettings settings, {
+  String tenantId = '',
+  String gatewayId = '',
+  String gatewayToken = '',
+}) {
+  return SupabaseGatewayClient.fromSettings(
+    settings,
+    tenantId: tenantId,
+    gatewayId: gatewayId,
+    gatewayToken: gatewayToken,
+  );
+}
 
 class GatewayWebServer {
   GatewayWebServer({
@@ -28,9 +48,7 @@ class GatewayWebServer {
     GatewayClientFactory? clientFactory,
   }) : _discovery = discovery ?? const CupsDiscoveryService(),
        _printerService = printerService ?? GatewayPrinterService(),
-       _clientFactory =
-           clientFactory ??
-           ((settings) => SupabaseGatewayClient.fromSettings(settings));
+       _clientFactory = clientFactory ?? _defaultGatewayClientFactory;
 
   final GatewayRuntimeSettings settings;
   final GatewayConfigStore store;
@@ -132,6 +150,22 @@ class GatewayWebServer {
         <String, Object?>{'ok': true},
         setCookies: <String>[_clearSessionCookie()],
       );
+      return;
+    }
+    if (request.method == 'GET' && path == '/api/print-profile') {
+      await _getPrintProfile(request);
+      return;
+    }
+    if (request.method == 'PUT' && path == '/api/print-profile') {
+      await _putPrintProfile(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/api/print-profile/sync') {
+      await _syncPrintProfile(request);
+      return;
+    }
+    if (request.method == 'POST' && path == '/api/print-profile/preview') {
+      await _previewPrintProfile(request);
       return;
     }
     if (request.method == 'POST' && path == '/api/cups/scan') {
@@ -283,8 +317,116 @@ class GatewayWebServer {
         appVersion: settings.appVersion,
       ),
     );
+    await store.savePrintProfile(StorePrintProfile(), markLocalEdited: false);
+    final seedClient = _client(
+      tenantId: tenant.tenantId,
+      gatewayId: provision.gatewayId,
+      gatewayToken: provision.gatewayToken,
+    );
+    try {
+      await store.importPrintProfileSeed(
+        await seedClient.fetchStorePrintSeed(),
+      );
+    } catch (_) {
+      await store.savePrintProfile(StorePrintProfile(), markLocalEdited: false);
+    } finally {
+      seedClient.close();
+    }
     _sessions.remove(sessionId);
     onConfigurationChanged();
+  }
+
+  Future<void> _getPrintProfile(HttpRequest request) async {
+    final profile = await store.loadPrintProfile();
+    await _json(request, HttpStatus.ok, <String, Object?>{
+      'ok': true,
+      'profile': _printProfileJson(profile),
+      'sync': _printProfileSyncJson(profile),
+      'font_warning': _printerService.fontWarning,
+    });
+  }
+
+  Future<void> _putPrintProfile(HttpRequest request) async {
+    final current = await store.loadPrintProfile();
+    final next = _validatedPrintProfile(await _readBody(request), current);
+    await store.savePrintProfile(next);
+    onConfigurationChanged();
+    final saved = await store.loadPrintProfile();
+    await _json(request, HttpStatus.ok, <String, Object?>{
+      'ok': true,
+      'profile': _printProfileJson(saved),
+      'sync': _printProfileSyncJson(saved),
+      'font_warning': _printerService.fontWarning,
+    });
+  }
+
+  Future<void> _syncPrintProfile(HttpRequest request) async {
+    final body = await _readBody(request);
+    final replaceLocal = body['replace_local'];
+    if (replaceLocal is! bool) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'REPLACE_LOCAL_INVALID',
+        'replace_local phải là true hoặc false.',
+      );
+    }
+    final current = await store.loadPrintProfile();
+    if (current.localEditedAt != null && !replaceLocal) {
+      throw const _WebException(
+        HttpStatus.conflict,
+        'LOCAL_EDITS_EXIST',
+        'Cấu hình in trên máy đã được sửa. Chọn ghi đè nếu muốn đồng bộ lại.',
+      );
+    }
+    final config = await store.loadConfig();
+    if (config == null || !config.isProvisioned) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'GATEWAY_NOT_PROVISIONED',
+        'Gateway chưa được đăng ký với quán.',
+      );
+    }
+    final client = _client(
+      tenantId: config.tenantId,
+      gatewayId: config.gatewayId,
+      gatewayToken: config.gatewayToken,
+    );
+    try {
+      await store.importPrintProfileSeed(await client.fetchStorePrintSeed());
+    } finally {
+      client.close();
+    }
+    onConfigurationChanged();
+    final saved = await store.loadPrintProfile();
+    await _json(request, HttpStatus.ok, <String, Object?>{
+      'ok': true,
+      'profile': _printProfileJson(saved),
+      'sync': _printProfileSyncJson(saved),
+      'font_warning': _printerService.fontWarning,
+    });
+  }
+
+  Future<void> _previewPrintProfile(HttpRequest request) async {
+    final body = await _readBody(request);
+    final type = body['type'];
+    if (type is! String || (type != 'receipt' && type != 'kitchen')) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'PREVIEW_TYPE_INVALID',
+        'Loại bản xem thử không hợp lệ.',
+      );
+    }
+    final profile = await store.loadPrintProfile();
+    final template = type == 'kitchen'
+        ? profile.templateSettings.kitchenTemplate
+        : profile.templateSettings.receiptTemplate;
+    await _json(request, HttpStatus.ok, <String, Object?>{
+      'ok': true,
+      'type': type,
+      'template': template,
+      'paper_width_mm': 80,
+      'text': _printerService.previewText(type: type, printProfile: profile),
+    });
   }
 
   Future<void> _scanCups(HttpRequest request) async {
@@ -477,7 +619,11 @@ class GatewayWebServer {
         capabilities.warning ?? 'Driver không hỗ trợ tính năng này.',
       );
     }
-    await _printerService.test(profile, action);
+    await _printerService.test(
+      profile,
+      action,
+      printProfile: await store.loadPrintProfile(),
+    );
     await _json(request, HttpStatus.ok, <String, Object?>{'ok': true});
   }
 
@@ -502,9 +648,18 @@ class GatewayWebServer {
     );
   }
 
-  SupabaseGatewayClient _client() {
+  SupabaseGatewayClient _client({
+    String tenantId = '',
+    String gatewayId = '',
+    String gatewayToken = '',
+  }) {
     try {
-      return _clientFactory(settings);
+      return _clientFactory(
+        settings,
+        tenantId: tenantId,
+        gatewayId: gatewayId,
+        gatewayToken: gatewayToken,
+      );
     } on StateError {
       throw const _WebException(
         HttpStatus.internalServerError,
@@ -670,6 +825,258 @@ Map<String, Object?> _tenantJson(TenantOption tenant) => <String, Object?>{
 };
 
 String _text(Object? value) => value?.toString().trim() ?? '';
+
+Map<String, Object?> _printProfileJson(StorePrintProfile profile) =>
+    <String, Object?>{
+      'store_name': profile.storeName,
+      'store_name_ja': profile.storeNameJa,
+      'address': profile.address,
+      'phone': profile.phone,
+      'tax_id': profile.taxId,
+      'currency': profile.currency,
+      'header_text_vi': profile.headerTextVi,
+      'header_text_ja': profile.headerTextJa,
+      'footer_text_vi': profile.footerTextVi,
+      'footer_text_ja': profile.footerTextJa,
+      'template_settings': profile.templateSettings.toJson(),
+    };
+
+Map<String, Object?> _printProfileSyncJson(
+  StorePrintProfile profile,
+) => <String, Object?>{
+  'last_synced_at': profile.lastSyncedAt,
+  'local_edited_at': profile.localEditedAt,
+  'warning': profile.lastSyncedAt == null
+      ? 'Chưa đồng bộ cấu hình in từ hệ thống. Đang dùng cấu hình mặc định trên máy.'
+      : null,
+};
+
+StorePrintProfile _validatedPrintProfile(
+  Map<String, dynamic> body,
+  StorePrintProfile current,
+) {
+  final rawProfile = body['profile'];
+  if (rawProfile != null && body.keys.any((key) => key != 'profile')) {
+    throw const _WebException(
+      HttpStatus.badRequest,
+      'PROFILE_FIELD_INVALID',
+      'Trường cấu hình in không được hỗ trợ.',
+    );
+  }
+  final input = rawProfile == null
+      ? body
+      : (rawProfile is Map
+            ? Map<String, dynamic>.from(rawProfile)
+            : throw const _WebException(
+                HttpStatus.badRequest,
+                'PROFILE_INVALID',
+                'Dữ liệu cấu hình in không hợp lệ.',
+              ));
+  const stringLimits = <String, int>{
+    'store_name': 120,
+    'store_name_ja': 120,
+    'address': 240,
+    'phone': 40,
+    'tax_id': 80,
+    'currency': 8,
+    'header_text_vi': 500,
+    'header_text_ja': 500,
+    'footer_text_vi': 500,
+    'footer_text_ja': 500,
+  };
+  const allowedTopLevel = <String>{
+    'store_name',
+    'store_name_ja',
+    'address',
+    'phone',
+    'tax_id',
+    'currency',
+    'header_text_vi',
+    'header_text_ja',
+    'footer_text_vi',
+    'footer_text_ja',
+    'template_settings',
+  };
+  for (final key in input.keys) {
+    if (!allowedTopLevel.contains(key)) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'PROFILE_FIELD_INVALID',
+        'Trường cấu hình in không được hỗ trợ.',
+      );
+    }
+  }
+  final strings = <String, String>{};
+  for (final entry in stringLimits.entries) {
+    if (!input.containsKey(entry.key)) continue;
+    final value = input[entry.key];
+    if (value is! String) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'PROFILE_FIELD_INVALID',
+        'Trường cấu hình in phải là chuỗi.',
+      );
+    }
+    if (value.length > entry.value) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'PROFILE_FIELD_TOO_LONG',
+        'Trường cấu hình in quá dài.',
+      );
+    }
+    strings[entry.key] = value;
+  }
+
+  var templateSettings = current.templateSettings;
+  if (input.containsKey('template_settings')) {
+    final rawTemplates = input['template_settings'];
+    if (rawTemplates is! Map) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'TEMPLATE_SETTINGS_INVALID',
+        'Cấu hình mẫu in không hợp lệ.',
+      );
+    }
+    templateSettings = _validatedTemplateSettings(
+      Map<String, dynamic>.from(rawTemplates),
+      current.templateSettings,
+    );
+  }
+
+  return current.copyWith(
+    storeName: strings['store_name'],
+    storeNameJa: strings['store_name_ja'],
+    address: strings['address'],
+    phone: strings['phone'],
+    taxId: strings['tax_id'],
+    currency: strings['currency'],
+    headerTextVi: strings['header_text_vi'],
+    headerTextJa: strings['header_text_ja'],
+    footerTextVi: strings['footer_text_vi'],
+    footerTextJa: strings['footer_text_ja'],
+    templateSettings: templateSettings,
+  );
+}
+
+TemplateSettings _validatedTemplateSettings(
+  Map<String, dynamic> input,
+  TemplateSettings current,
+) {
+  const allowed = <String>{
+    'receipt_template',
+    'kitchen_template',
+    'languages',
+    'show_order_number',
+    'show_table',
+    'show_date_time',
+    'show_staff_name',
+    'show_qr_code',
+    'show_time_seated',
+  };
+  for (final key in input.keys) {
+    if (!allowed.contains(key)) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'TEMPLATE_FIELD_INVALID',
+        'Trường mẫu in không được hỗ trợ.',
+      );
+    }
+  }
+  final receiptTemplate = _optionalEnum(
+    input,
+    'receipt_template',
+    const <String>{'modern', 'classic', 'compact', 'detailed'},
+    'Mẫu hóa đơn không được hỗ trợ.',
+  );
+  final kitchenTemplate = _optionalEnum(
+    input,
+    'kitchen_template',
+    const <String>{'standard', 'compact', 'checklist'},
+    'Mẫu bếp không được hỗ trợ.',
+  );
+  final languages = input.containsKey('languages')
+      ? _validatedLanguages(input['languages'])
+      : null;
+  bool? boolField(String key) {
+    if (!input.containsKey(key)) return null;
+    final value = input[key];
+    if (value is bool) return value;
+    throw const _WebException(
+      HttpStatus.badRequest,
+      'TEMPLATE_FIELD_INVALID',
+      'Tuỳ chọn mẫu in phải là true hoặc false.',
+    );
+  }
+
+  return current.copyWith(
+    receiptTemplate: receiptTemplate,
+    kitchenTemplate: kitchenTemplate,
+    languages: languages,
+    showOrderNumber: boolField('show_order_number'),
+    showTable: boolField('show_table'),
+    showDateTime: boolField('show_date_time'),
+    showStaffName: boolField('show_staff_name'),
+    showQrCode: boolField('show_qr_code'),
+    showTimeSeated: boolField('show_time_seated'),
+  );
+}
+
+String? _optionalEnum(
+  Map<String, dynamic> input,
+  String key,
+  Set<String> allowed,
+  String message,
+) {
+  if (!input.containsKey(key)) return null;
+  final value = input[key];
+  if (value is! String || value.length > 40) {
+    throw _WebException(
+      HttpStatus.badRequest,
+      'TEMPLATE_FIELD_INVALID',
+      message,
+    );
+  }
+  final normalized = value.trim().toLowerCase();
+  if (!allowed.contains(normalized)) {
+    throw _WebException(
+      HttpStatus.badRequest,
+      'TEMPLATE_FIELD_INVALID',
+      message,
+    );
+  }
+  return normalized;
+}
+
+List<String>? _validatedLanguages(Object? value) {
+  if (value is! List || value.isEmpty || value.length > 8) {
+    throw const _WebException(
+      HttpStatus.badRequest,
+      'LANGUAGES_INVALID',
+      'Danh sách ngôn ngữ không hợp lệ.',
+    );
+  }
+  const allowed = <String>{'vi', 'ja', 'en', 'zh', 'ko', 'id', 'my'};
+  final languages = <String>[];
+  for (final item in value) {
+    if (item is! String || item.length > 8) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'LANGUAGES_INVALID',
+        'Danh sách ngôn ngữ không hợp lệ.',
+      );
+    }
+    final language = item.trim().toLowerCase();
+    if (!allowed.contains(language)) {
+      throw const _WebException(
+        HttpStatus.badRequest,
+        'LANGUAGE_UNSUPPORTED',
+        'Ngôn ngữ in không được hỗ trợ.',
+      );
+    }
+    if (!languages.contains(language)) languages.add(language);
+  }
+  return languages;
+}
 
 int _gatewayStatusCode(GatewayApiException error) {
   if (error.statusCode == 401 || error.statusCode == 403) {

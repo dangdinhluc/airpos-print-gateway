@@ -36,9 +36,38 @@ void main() {
       ],
     });
   });
+
+  test('fetches print seed with gateway credentials', () async {
+    final client = _RecordingClient(
+      response: <String, Object?>{
+        'store_settings': <String, Object?>{'store_name': 'Seed Store'},
+      },
+    );
+    final api = SupabaseGatewayClient(
+      baseUrl: 'https://control.example.test',
+      anonKey: 'anon-key',
+      tenantId: 'tenant-1',
+      gatewayId: 'gateway-1',
+      gatewayToken: 'gateway-token',
+      client: client,
+    );
+
+    final result = await api.fetchStorePrintSeed();
+
+    expect(client.path, '/rest/v1/rpc/print_gateway_get_store_print_seed');
+    expect(client.body, <String, Object?>{
+      'p_tenant_id': 'tenant-1',
+      'p_gateway_id': 'gateway-1',
+      'p_gateway_token': 'gateway-token',
+    });
+    expect(result['store_settings']['store_name'], 'Seed Store');
+  });
 }
 
 class _RecordingClient extends http.BaseClient {
+  _RecordingClient({this.response = const <String, Object?>{}});
+
+  final Map<String, Object?> response;
   String path = '';
   Map<String, dynamic> body = <String, dynamic>{};
 
@@ -48,7 +77,7 @@ class _RecordingClient extends http.BaseClient {
     path = typedRequest.url.path;
     body = Map<String, dynamic>.from(jsonDecode(typedRequest.body) as Map);
     return http.StreamedResponse(
-      Stream<List<int>>.value(utf8.encode('{}')),
+      Stream<List<int>>.value(utf8.encode(jsonEncode(response))),
       200,
       request: request,
       headers: <String, String>{'content-type': 'application/json'},

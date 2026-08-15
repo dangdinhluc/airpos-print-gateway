@@ -4,6 +4,7 @@ export 'src/escpos.dart';
 export 'src/gateway_api.dart';
 export 'src/models.dart';
 export 'src/process_runner.dart';
+export 'src/print_profile.dart';
 export 'src/runtime.dart';
 export 'src/runtime_settings.dart';
 export 'src/runtime_status.dart';

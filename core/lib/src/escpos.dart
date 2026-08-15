@@ -1,9 +1,14 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as image;
 import 'package:qr/qr.dart';
 
 import 'models.dart';
+import 'print_profile.dart';
+
+const String defaultUnicodeFontArchivePath =
+    '/opt/airpos-print-gateway/fonts/airpos-unicode.fnt.zip';
 
 class RenderedDocument {
   const RenderedDocument({
@@ -20,26 +25,56 @@ class RenderedDocument {
 enum TestPrintAction { receipt, kitchen, cut, beep, cashDrawer }
 
 class GatewayPrintRenderer {
-  const GatewayPrintRenderer();
+  const GatewayPrintRenderer({
+    this.unicodeFontArchivePath = defaultUnicodeFontArchivePath,
+  });
+
+  final String unicodeFontArchivePath;
+
+  static final Map<String, Future<_LoadedFont>> _fontCache =
+      <String, Future<_LoadedFont>>{};
+  static final Map<String, _LoadedFont> _fontStatus = <String, _LoadedFont>{};
+
+  String? get fontWarning => _fontStatus[unicodeFontArchivePath]?.warning;
+
+  bool get packagedUnicodeFontAvailable =>
+      _fontStatus[unicodeFontArchivePath]?.font != null;
 
   Future<RenderedDocument> renderTest(
     PrinterProfile profile, {
     TestPrintAction action = TestPrintAction.receipt,
+    StorePrintProfile? printProfile,
   }) async {
+    final jobType = switch (action) {
+      TestPrintAction.receipt => 'receipt',
+      TestPrintAction.kitchen => 'kitchen_ticket',
+      _ => null,
+    };
     final text = switch (action) {
-      TestPrintAction.receipt => _testText(profile, 'TEST RECEIPT'),
-      TestPrintAction.kitchen => _testText(profile, 'TEST KITCHEN'),
+      TestPrintAction.receipt || TestPrintAction.kitchen => renderPreviewText(
+        jobType: jobType!,
+        payload: samplePayload(jobType: jobType),
+        printProfile: printProfile,
+      ),
       TestPrintAction.cut => 'AIRPOS CUT TEST',
       TestPrintAction.beep => 'AIRPOS BEEP TEST',
       TestPrintAction.cashDrawer => 'AIRPOS CASH DRAWER TEST',
     };
-    return _render(profile, text, action: action);
+    return _render(
+      profile,
+      text,
+      action: action,
+      qrData: action == TestPrintAction.receipt
+          ? _receiptQrData(samplePayload(jobType: jobType!), printProfile)
+          : null,
+    );
   }
 
   Future<RenderedDocument> renderJob(
     GatewayJob job,
-    PrinterProfile profile,
-  ) async {
+    PrinterProfile profile, {
+    StorePrintProfile? printProfile,
+  }) async {
     final type = job.jobType;
     if (type == 'cash_drawer') {
       return _render(
@@ -48,19 +83,78 @@ class GatewayPrintRenderer {
         action: TestPrintAction.cashDrawer,
       );
     }
+    final text = renderPreviewText(
+      jobType: type,
+      payload: job.payload,
+      printProfile: printProfile,
+    );
     if (type == 'table_qr') {
-      final url = _value(job.payload, <String>['qr_url', 'url']);
-      final title = _value(job.payload, <String>[
-        'table_label',
-        'table_name',
-        'table_code',
-      ]);
-      return _render(profile, _qrText(title, url), qrData: url);
+      return _render(profile, text, qrData: _qrData(job.payload));
     }
-    if (type == 'kitchen_ticket') {
-      return _render(profile, _kitchenText(job.payload));
+    return _render(
+      profile,
+      text,
+      qrData: _receiptQrData(job.payload, printProfile),
+    );
+  }
+
+  String renderPreviewText({
+    String jobType = 'receipt',
+    Map<String, dynamic>? payload,
+    StorePrintProfile? printProfile,
+  }) {
+    final source = payload ?? samplePayload(jobType: jobType);
+    return switch (jobType) {
+      'cash_drawer' => 'AIRPOS CASH DRAWER',
+      'table_qr' => _qrText(
+        _value(source, <String>['table_label', 'table_name', 'table_code']),
+        _qrData(source),
+      ),
+      'kitchen_ticket' => _kitchenText(source, printProfile),
+      _ => _receiptText(source, printProfile),
+    };
+  }
+
+  String renderSamplePreviewText({
+    String jobType = 'receipt',
+    StorePrintProfile? printProfile,
+  }) {
+    return renderPreviewText(
+      jobType: jobType,
+      payload: samplePayload(jobType: jobType),
+      printProfile: printProfile,
+    );
+  }
+
+  Map<String, dynamic> samplePayload({String jobType = 'receipt'}) {
+    if (jobType == 'kitchen_ticket') {
+      return <String, dynamic>{
+        'order_number': 'A-100',
+        'table_label': 'B2',
+        'created_at': '2026-08-15 12:00',
+        'items': <Map<String, Object?>>[
+          <String, Object?>{'quantity': 2, 'name': 'Pho', 'note': 'No onion'},
+        ],
+      };
     }
-    return _render(profile, _receiptText(job.payload));
+    return <String, dynamic>{
+      'order_number': 'A-100',
+      'table_label': 'B2',
+      'created_at': '2026-08-15 12:00',
+      'staff_name': 'Mai',
+      'store_settings': <String, Object?>{
+        'store_name': 'AirPOS Demo',
+        'address': 'Tokyo',
+        'phone': '03-0000-0000',
+        'currency': 'JPY',
+      },
+      'items': <Map<String, Object?>>[
+        <String, Object?>{'quantity': 2, 'name': 'Pho', 'line_total': 1200},
+      ],
+      'subtotal': 1200,
+      'total': 1200,
+      'qr_url': 'https://example.test/review',
+    };
   }
 
   Future<RenderedDocument> _render(
@@ -72,10 +166,12 @@ class GatewayPrintRenderer {
     final forceCut = action == TestPrintAction.cut;
     final forceBeep = action == TestPrintAction.beep;
     final openDrawer = action == TestPrintAction.cashDrawer;
-    final printable = _ascii(text);
+    final loadedFont = await _loadFont();
+    final printable = loadedFont.font == null ? _ascii(text) : text;
     final bitmap = _renderBitmap(
       printable,
       profile.paperWidthMm == 58 ? 384 : 576,
+      font: loadedFont.font ?? image.arial14,
       qrData: qrData,
     );
     if (profile.protocol == PrinterProtocol.starCups) {
@@ -100,12 +196,18 @@ class GatewayPrintRenderer {
     );
   }
 
-  image.Image _renderBitmap(String text, int width, {String? qrData}) {
+  image.Image _renderBitmap(
+    String text,
+    int width, {
+    required image.BitmapFont font,
+    String? qrData,
+  }) {
     final lines = _wrap(text, width == 384 ? 31 : 46);
     final qrImage = qrData == null || qrData.isEmpty
         ? null
         : _renderQr(qrData, width);
-    final textHeight = (lines.length * 20) + 20;
+    final lineHeight = font.lineHeight <= 0 ? 20 : font.lineHeight + 6;
+    final textHeight = (lines.length * lineHeight) + 20;
     final height =
         textHeight + (qrImage?.height ?? 0) + (qrImage == null ? 0 : 20);
     final canvas = image.Image(width: width, height: height);
@@ -115,12 +217,12 @@ class GatewayPrintRenderer {
       image.drawString(
         canvas,
         line,
-        font: image.arial14,
+        font: font,
         x: 8,
         y: y,
         color: image.ColorRgb8(0, 0, 0),
       );
-      y += 20;
+      y += lineHeight;
     }
     if (qrImage != null) {
       image.compositeImage(
@@ -131,6 +233,42 @@ class GatewayPrintRenderer {
       );
     }
     return canvas;
+  }
+
+  Future<_LoadedFont> _loadFont() {
+    return _fontCache.putIfAbsent(unicodeFontArchivePath, () async {
+      final path = unicodeFontArchivePath.trim();
+      if (path.isEmpty) {
+        final result = const _LoadedFont(
+          warning:
+              'Unicode font archive path is empty; using ASCII raster font.',
+        );
+        _fontStatus[unicodeFontArchivePath] = result;
+        return result;
+      }
+      final file = File(path);
+      if (!await file.exists()) {
+        final result = const _LoadedFont(
+          warning:
+              'Unicode font archive is not installed; using ASCII raster font.',
+        );
+        _fontStatus[unicodeFontArchivePath] = result;
+        return result;
+      }
+      try {
+        final result = _LoadedFont(
+          font: image.BitmapFont.fromZip(await file.readAsBytes()),
+        );
+        _fontStatus[unicodeFontArchivePath] = result;
+        return result;
+      } catch (error) {
+        final result = _LoadedFont(
+          warning: 'Unicode font archive failed to load: $error',
+        );
+        _fontStatus[unicodeFontArchivePath] = result;
+        return result;
+      }
+    });
   }
 
   image.Image _renderQr(String value, int width) {
@@ -203,8 +341,6 @@ class GatewayPrintRenderer {
     required bool cut,
     required bool cashDrawer,
   }) {
-    // Star's CUPS PPD owns the option names; values stay fixed and are never
-    // accepted from a server payload.
     return <String, String>{
       if (cut && profile.effectiveCapabilities.cut) 'PageCutType': 'PartialCut',
       if (cashDrawer && profile.effectiveCapabilities.cashDrawer)
@@ -212,62 +348,215 @@ class GatewayPrintRenderer {
     };
   }
 
-  String _testText(PrinterProfile profile, String title) => <String>[
-    'AIRPOS PRINT GATEWAY',
-    title,
-    'Connection: ${profile.connectionType.value}',
-    'Protocol: ${profile.protocol.value}',
-    'Paper: ${profile.paperWidthMm}mm',
-    'Queue: ${profile.cupsQueue ?? '-'}',
-  ].join('\n');
+  String _receiptText(
+    Map<String, dynamic> payload,
+    StorePrintProfile? printProfile,
+  ) {
+    final settings = printProfile?.templateSettings ?? TemplateSettings();
+    final store = _storeSettings(payload);
+    final order = _order(payload);
+    final items = _items(payload);
+    final lines = <String>[];
+    final storeName = _storeValue(
+      printProfile,
+      printProfile?.storeName,
+      store,
+      <String>['store_name', 'brand_name'],
+      'AIRPOS',
+      defaultLocal: StorePrintProfile().storeName,
+    );
+    final currency = _storeValue(
+      printProfile,
+      printProfile?.currency,
+      store,
+      <String>['currency'],
+      'JPY',
+    );
 
-  String _receiptText(Map<String, dynamic> payload) {
-    final store = _map(payload, <String>['store_settings', 'storeSettings']);
-    final order = _map(payload, <String>['order', 'receipt_snapshot']);
-    final items = _list(payload, 'items');
-    final lines = <String>[
-      _value(store, <String>['store_name', 'brand_name']).isEmpty
-          ? 'AIRPOS'
-          : _value(store, <String>['store_name', 'brand_name']),
-      'RECEIPT #${_value(payload, <String>['order_number'])}',
-      'Table: ${_value(payload, <String>['table_label', 'table_name'])}',
-      '--------------------------------',
-    ];
-    for (final item in items) {
-      final name = _value(item, <String>['name', 'product_name', 'item_name']);
-      final quantity = _value(item, <String>['quantity', 'qty']);
-      final total = _value(item, <String>['line_total', 'total', 'subtotal']);
-      lines.add('$quantity x $name${total.isEmpty ? '' : '  $total'}');
+    if (settings.receiptTemplate == 'classic') {
+      lines
+        ..add('*** RECEIPT ***')
+        ..add(storeName);
+    } else if (settings.receiptTemplate == 'compact') {
+      lines.add(
+        'RECEIPT #${_field(payload, order, <String>['order_number', 'order_no'])}',
+      );
+    } else if (settings.receiptTemplate == 'detailed') {
+      lines
+        ..add(storeName)
+        ..add('DETAILED RECEIPT');
+    } else {
+      lines
+        ..add(storeName)
+        ..add('RECEIPT');
     }
-    final total = _value(payload, <String>['total', 'grand_total']).isEmpty
-        ? _value(order, <String>['total', 'grand_total'])
-        : _value(payload, <String>['total', 'grand_total']);
-    lines
-      ..add('--------------------------------')
-      ..add('TOTAL: $total')
-      ..add('Thank you');
-    return lines.join('\n');
+
+    _appendStoreLine(
+      lines,
+      _storeValue(printProfile, printProfile?.storeNameJa, store, <String>[
+        'store_name_ja',
+      ], ''),
+    );
+    _appendStoreLine(
+      lines,
+      _storeValue(printProfile, printProfile?.address, store, <String>[
+        'address_ja',
+        'address',
+      ], ''),
+    );
+    _appendStoreLine(
+      lines,
+      _storeValue(printProfile, printProfile?.phone, store, <String>[
+        'phone',
+        'telephone',
+        'hotline',
+      ], ''),
+    );
+    _appendStoreLine(
+      lines,
+      _storeValue(printProfile, printProfile?.taxId, store, <String>[
+        'tax_id',
+      ], ''),
+    );
+    _appendLocalized(lines, printProfile, header: true);
+
+    final meta = <String>[];
+    if (settings.showOrderNumber) {
+      final value = _field(payload, order, <String>[
+        'order_number',
+        'order_no',
+      ]);
+      if (value.isNotEmpty) meta.add('Order: #$value');
+    }
+    if (settings.showTable) {
+      final value = _tableLabel(payload, order);
+      if (value.isNotEmpty) meta.add('Table: $value');
+    }
+    if (settings.showDateTime) {
+      final value = _field(payload, order, <String>[
+        'paid_at',
+        'created_at',
+        'updated_at',
+      ]);
+      if (value.isNotEmpty) meta.add('Date: $value');
+    }
+    if (settings.showStaffName) {
+      final value = _field(payload, order, <String>[
+        'cashier_name',
+        'staff_name',
+        'created_by_name',
+      ]);
+      if (value.isNotEmpty) meta.add('Cashier: $value');
+    }
+    if (settings.showTimeSeated) {
+      final value = _field(payload, order, <String>['time_seated_minutes']);
+      if (value.isNotEmpty) meta.add('Seated: $value min');
+    }
+    if (settings.receiptTemplate != 'compact') lines.addAll(meta);
+
+    lines.add(_rule(settings.receiptTemplate));
+    for (final item in items) {
+      lines.add(_receiptItemLine(item, currency));
+      final note = _value(item, <String>['note', 'notes', 'modifiers']);
+      if (note.isNotEmpty && settings.receiptTemplate == 'detailed') {
+        lines.add('  $note');
+      }
+    }
+    lines.add(_rule(settings.receiptTemplate));
+
+    _appendAmount(lines, 'Subtotal', payload, order, <String>[
+      'subtotal',
+      'sub_total',
+    ], currency);
+    _appendAmount(lines, 'Discount', payload, order, <String>[
+      'discount_amount',
+      'discount',
+    ], currency);
+    _appendAmount(lines, 'Tax', payload, order, <String>[
+      'tax_amount',
+      'tax',
+    ], currency);
+    _appendAmount(lines, 'TOTAL', payload, order, <String>[
+      'total',
+      'grand_total',
+      'total_amount',
+      'remaining_total',
+    ], currency);
+
+    final payments = _payments(payload);
+    if (settings.receiptTemplate == 'detailed' && payments.isNotEmpty) {
+      lines.add('Payments:');
+      for (final payment in payments) {
+        final method = _value(payment, <String>['method', 'payment_method']);
+        final amount = _amount(
+          _value(payment, <String>['amount', 'paid_amount']),
+          currency,
+        );
+        lines.add('  ${method.isEmpty ? 'payment' : method}: $amount');
+      }
+    }
+
+    final qrData = _receiptQrData(payload, printProfile);
+    if (settings.showQrCode && qrData.isNotEmpty) lines.add('QR: $qrData');
+    _appendLocalized(lines, printProfile, header: false);
+    lines.add('Thank you');
+    return lines.where((line) => line.trim().isNotEmpty).join('\n');
   }
 
-  String _kitchenText(Map<String, dynamic> payload) {
-    final lines = <String>[
-      'KITCHEN',
-      _value(payload, <String>['station_name', 'station']),
-      'Table: ${_value(payload, <String>['table_label', 'table_name', 'table_code'])}',
-      'Order: ${_value(payload, <String>['order_number', 'order_no'])}',
-      '--------------------------------',
-    ];
-    for (final item in _list(payload, 'items')) {
+  String _kitchenText(
+    Map<String, dynamic> payload,
+    StorePrintProfile? printProfile,
+  ) {
+    final settings = printProfile?.templateSettings ?? TemplateSettings();
+    final order = _order(payload);
+    final cancellation = _isCancellation(payload, order);
+    final lines = <String>[];
+    if (settings.kitchenTemplate == 'compact') {
+      lines.add(
+        'KITCHEN #${_field(payload, order, <String>['order_number', 'order_no'])}',
+      );
+    } else if (settings.kitchenTemplate == 'checklist') {
+      lines.add(cancellation ? 'CANCEL CHECKLIST' : 'KITCHEN CHECKLIST');
+    } else {
+      lines.add(cancellation ? 'CANCEL KITCHEN TICKET' : 'KITCHEN TICKET');
+    }
+    final station = _field(payload, order, <String>['station_name', 'station']);
+    if (station.isNotEmpty) lines.add('Station: $station');
+    final table = _tableLabel(payload, order);
+    if (settings.showTable && table.isNotEmpty) lines.add('Table: $table');
+    if (settings.showOrderNumber) {
+      final number = _field(payload, order, <String>[
+        'order_number',
+        'order_no',
+      ]);
+      if (number.isNotEmpty && settings.kitchenTemplate != 'compact') {
+        lines.add('Order: #$number');
+      }
+    }
+    if (settings.showDateTime) {
+      final value = _field(payload, order, <String>[
+        'created_at',
+        'updated_at',
+      ]);
+      if (value.isNotEmpty) lines.add('Time: $value');
+    }
+    lines.add(_rule(settings.kitchenTemplate));
+    for (final item in _items(payload)) {
       final quantity = _value(item, <String>['quantity', 'qty']);
       final name = _value(item, <String>['name', 'product_name', 'item_name']);
-      lines.add('$quantity x $name');
+      final prefix = settings.kitchenTemplate == 'checklist' ? '[ ] ' : '';
+      lines.add('$prefix${quantity.isEmpty ? '1' : quantity} x $name');
       final note = _value(item, <String>['note', 'notes', 'modifiers']);
-      if (note.isNotEmpty) lines.add('  $note');
+      if (note.isNotEmpty && settings.kitchenTemplate != 'compact') {
+        lines.add('  $note');
+      }
     }
-    final reason = _value(payload, <String>['cancel_reason', 'note']);
-    if (payload['is_cancellation'] == true && reason.isNotEmpty) {
-      lines.add('CANCEL: $reason');
-    }
+    final reason = _dynamicValue(payload, <String>[
+      'cancel_reason',
+      'reason',
+      'note',
+    ]);
+    if (cancellation && reason.isNotEmpty) lines.add('CANCEL: $reason');
     return lines.where((line) => line.trim().isNotEmpty).join('\n');
   }
 
@@ -291,6 +580,13 @@ class GatewayPrintRenderer {
   }
 }
 
+class _LoadedFont {
+  const _LoadedFont({this.font, this.warning});
+
+  final image.BitmapFont? font;
+  final String? warning;
+}
+
 String _ascii(String value) {
   final buffer = StringBuffer();
   for (final unit
@@ -298,6 +594,213 @@ String _ascii(String value) {
     buffer.write(unit <= 0x7F ? String.fromCharCode(unit) : '?');
   }
   return buffer.toString();
+}
+
+Map<String, dynamic> _snapshot(Map<String, dynamic> payload) =>
+    _map(payload, <String>['receipt_snapshot', 'snapshot']);
+
+Map<String, dynamic> _order(Map<String, dynamic> payload) {
+  final snapshot = _snapshot(payload);
+  final nested = _map(snapshot, <String>['order']);
+  if (nested.isNotEmpty) return nested;
+  final root = _map(payload, <String>['order']);
+  if (root.isNotEmpty) return root;
+  return snapshot.isEmpty ? payload : snapshot;
+}
+
+Map<String, dynamic> _storeSettings(Map<String, dynamic> payload) {
+  final snapshot = _snapshot(payload);
+  final root = _map(payload, <String>['store_settings', 'storeSettings']);
+  if (root.isNotEmpty) return root;
+  return _map(snapshot, <String>['store_settings', 'storeSettings']);
+}
+
+List<Map<String, dynamic>> _items(Map<String, dynamic> payload) {
+  final snapshot = _snapshot(payload);
+  final order = _order(payload);
+  for (final pair in <(Map<String, dynamic>, String)>[
+    (payload, 'items'),
+    (snapshot, 'items'),
+    (order, 'items'),
+    (payload, 'order_items'),
+    (snapshot, 'order_items'),
+  ]) {
+    final items = _list(pair.$1, pair.$2);
+    if (items.isNotEmpty) return items;
+  }
+  return <Map<String, dynamic>>[];
+}
+
+List<Map<String, dynamic>> _payments(Map<String, dynamic> payload) {
+  final snapshot = _snapshot(payload);
+  final order = _order(payload);
+  for (final pair in <(Map<String, dynamic>, String)>[
+    (payload, 'payments'),
+    (snapshot, 'payments'),
+    (order, 'payments'),
+  ]) {
+    final payments = _list(pair.$1, pair.$2);
+    if (payments.isNotEmpty) return payments;
+  }
+  return <Map<String, dynamic>>[];
+}
+
+String _field(
+  Map<String, dynamic> payload,
+  Map<String, dynamic> order,
+  List<String> keys,
+) {
+  final root = _value(payload, keys);
+  if (root.isNotEmpty) return root;
+  final orderValue = _value(order, keys);
+  if (orderValue.isNotEmpty) return orderValue;
+  final table = _map(order, <String>['table']);
+  return _value(table, keys);
+}
+
+String _dynamicValue(Map<String, dynamic> payload, List<String> keys) {
+  final snapshot = _snapshot(payload);
+  final order = _order(payload);
+  for (final map in <Map<String, dynamic>>[payload, snapshot, order]) {
+    final value = _value(map, keys);
+    if (value.isNotEmpty) return value;
+  }
+  return '';
+}
+
+String _tableLabel(Map<String, dynamic> payload, Map<String, dynamic> order) {
+  final table = _map(order, <String>['table']);
+  final root = _value(payload, <String>[
+    'table_label',
+    'table_name',
+    'table_code',
+  ]);
+  if (root.isNotEmpty) return root;
+  final orderValue = _value(order, <String>[
+    'table_label',
+    'table_name',
+    'table_code',
+  ]);
+  if (orderValue.isNotEmpty) return orderValue;
+  return _value(table, <String>['label', 'name', 'code']);
+}
+
+String _storeValue(
+  StorePrintProfile? profile,
+  String? local,
+  Map<String, dynamic> store,
+  List<String> keys,
+  String fallback, {
+  String defaultLocal = '',
+}) {
+  final payload = _value(store, keys);
+  final text = local?.trim() ?? '';
+  final normalizedDefault = defaultLocal.trim();
+  if (profile != null &&
+      text.isNotEmpty &&
+      !((text == fallback || text == normalizedDefault) &&
+          payload.isNotEmpty)) {
+    return text;
+  }
+  return payload.isNotEmpty ? payload : fallback;
+}
+
+void _appendStoreLine(List<String> lines, String? value) {
+  final text = value?.trim() ?? '';
+  if (text.isNotEmpty) lines.add(text);
+}
+
+void _appendLocalized(
+  List<String> lines,
+  StorePrintProfile? profile, {
+  required bool header,
+}) {
+  if (profile == null) return;
+  final settings = profile.templateSettings;
+  if (settings.languages.contains('vi')) {
+    _appendStoreLine(
+      lines,
+      header ? profile.headerTextVi : profile.footerTextVi,
+    );
+  }
+  if (settings.languages.contains('ja')) {
+    _appendStoreLine(
+      lines,
+      header ? profile.headerTextJa : profile.footerTextJa,
+    );
+  }
+}
+
+void _appendAmount(
+  List<String> lines,
+  String label,
+  Map<String, dynamic> payload,
+  Map<String, dynamic> order,
+  List<String> keys,
+  String currency,
+) {
+  final value = _field(payload, order, keys);
+  if (value.isNotEmpty) lines.add('$label: ${_amount(value, currency)}');
+}
+
+String _receiptItemLine(Map<String, dynamic> item, String currency) {
+  final name = _value(item, <String>['name', 'product_name', 'item_name']);
+  final quantity = _value(item, <String>['quantity', 'qty']);
+  final total = _value(item, <String>[
+    'line_total',
+    'line_subtotal',
+    'total',
+    'subtotal',
+  ]);
+  return '${quantity.isEmpty ? '1' : quantity} x $name${total.isEmpty ? '' : '  ${_amount(total, currency)}'}';
+}
+
+String _amount(String value, String currency) {
+  final text = value.trim();
+  if (text.isEmpty) return '';
+  if (RegExp(r'[^0-9.-]').hasMatch(text)) return text;
+  final number = num.tryParse(text);
+  if (number == null) return text;
+  final symbol = switch (currency.trim().toUpperCase()) {
+    'JPY' => 'JPY ',
+    'VND' => 'VND ',
+    'USD' => 'USD ',
+    _ => '${currency.trim().toUpperCase()} ',
+  };
+  return '$symbol${number.round()}';
+}
+
+String _receiptQrData(
+  Map<String, dynamic> payload,
+  StorePrintProfile? printProfile,
+) {
+  final settings = printProfile?.templateSettings ?? TemplateSettings();
+  if (!settings.showQrCode) return '';
+  return _dynamicValue(payload, <String>[
+    'qr_url',
+    'review_qr_url',
+    'review_url',
+    'receipt_qr_url',
+  ]);
+}
+
+String _qrData(Map<String, dynamic> payload) =>
+    _dynamicValue(payload, <String>['qr_url', 'url', 'tablet_url']);
+
+String _rule(String template) => template == 'compact'
+    ? '----------------'
+    : '--------------------------------';
+
+bool _isTrue(Object? value) =>
+    value == true || value?.toString().trim().toLowerCase() == 'true';
+
+bool _isCancellation(Map<String, dynamic> payload, Map<String, dynamic> order) {
+  if (_isTrue(payload['is_cancellation']) ||
+      _isTrue(order['is_cancellation'])) {
+    return true;
+  }
+  final type = _dynamicValue(payload, <String>['ticket_type', 'type']);
+  return type.toLowerCase() == 'cancellation';
 }
 
 String _value(Map<String, dynamic> json, List<String> keys) {

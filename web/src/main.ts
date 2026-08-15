@@ -35,6 +35,32 @@ type CupsScan = {
   models: { name: string; description: string }[];
   default_queue?: string | null;
 };
+type TemplateSettings = {
+  receipt_template: string;
+  kitchen_template: string;
+  show_order_number: boolean;
+  show_table: boolean;
+  show_date_time: boolean;
+  show_staff_name: boolean;
+  show_qr_code: boolean;
+  show_time_seated: boolean;
+};
+type PrintProfile = {
+  store_name: string;
+  store_name_ja: string;
+  address: string;
+  phone: string;
+  tax_id: string;
+  currency: string;
+  header_text_vi: string;
+  header_text_ja: string;
+  footer_text_vi: string;
+  footer_text_ja: string;
+  template_settings: TemplateSettings;
+};
+type PrintProfileSync = { last_synced_at?: string | null; local_edited_at?: string | null; warning?: string | null };
+type PrintProfileResponse = { profile: PrintProfile; sync: PrintProfileSync; font_warning?: string | null };
+type PreviewResponse = { type: 'receipt' | 'kitchen'; template: string; paper_width_mm: number; text: string };
 
 const app = document.querySelector<HTMLElement>('#app')!;
 const toast = document.querySelector<HTMLElement>('#toast')!;
@@ -43,6 +69,8 @@ let printers: Printer[] = [];
 let scan: CupsScan | null = null;
 let tenants: Tenant[] = [];
 let editing: Printer | null = null;
+let printProfile: PrintProfileResponse | null = null;
+let preview: PreviewResponse | null = null;
 let busy = false;
 let toastTimer = 0;
 
@@ -147,8 +175,12 @@ function renderTenantChoice(error = ''): void {
 async function loadDashboard(): Promise<void> {
   gatewayStatus = await api<GatewayStatus>('/api/status');
   if (!gatewayStatus.configured) { renderLogin(); return; }
-  const result = await api<{ printers: Printer[] }>('/api/printers');
-  printers = result.printers ?? [];
+  const [profileResult, printerResult] = await Promise.all([
+    api<PrintProfileResponse>('/api/print-profile'),
+    api<{ printers: Printer[] }>('/api/printers'),
+  ]);
+  printProfile = profileResult;
+  printers = printerResult.printers ?? [];
   renderDashboard();
 }
 
@@ -158,11 +190,19 @@ function renderDashboard(): void {
     <div class="dashboard-head"><div><p class="eyebrow">Gateway Ubuntu</p><h1>Quản lý máy in</h1><p class="muted">Worker chạy nền kể cả khi anh đóng trình duyệt.</p></div><div class="actions"><button class="secondary" id="refresh">Làm mới</button><button class="primary" id="new-printer">Thêm máy in</button></div></div>
     <div class="status-grid"><div class="card metric"><span class="metric-label">Worker</span><div class="metric-value"><span class="dot ${dotClass(worker.state)}"></span>${esc(worker.state === 'online' ? 'Đang chạy' : worker.state === 'not_configured' ? 'Chưa cấu hình' : 'Cần kiểm tra')}</div></div><div class="card metric"><span class="metric-label">CUPS</span><div class="metric-value"><span class="dot ${scan ? 'ok' : 'warn'}"></span>${scan ? 'Đã quét' : 'Chưa quét'}</div></div><div class="card metric"><span class="metric-label">Job gần nhất</span><div class="metric-value">${esc(worker.last_job_count ?? 0)}</div></div><div class="card metric"><span class="metric-label">Phiên bản</span><div class="metric-value">Ubuntu 2.0</div></div></div>
     ${worker.last_error ? `<p class="error">${esc(worker.last_error)}</p>` : ''}
-    <section class="card cups-panel"><div class="section-head"><div><h2>USB và CUPS</h2><p class="subtle">Chọn queue/device URI do CUPS trả về. Không dùng đường dẫn /dev.</p></div><button class="secondary" id="scan">Quét máy in USB</button></div>${renderScan()}</section>
-    <section><div class="section-head"><div><h2>Printer profiles</h2><p class="subtle">Cấu hình được lưu local và giữ nguyên sau reboot.</p></div></div>${renderPrinters()}</section>
-    ${editing ? renderEditor(editing) : ''}
+    ${renderPrintProfile()}
+    <section class="printer-section"><div class="section-head"><div><p class="eyebrow">Thiết bị local</p><h2>USB và CUPS</h2><p class="subtle">Chọn queue/device URI do CUPS trả về. Không dùng đường dẫn /dev.</p></div><button class="secondary" id="scan">Quét máy in USB</button></div><div class="card cups-panel">${renderScan()}</div><div class="section-head printer-section-head"><div><h2>Printer profiles</h2><p class="subtle">Cấu hình được lưu local và giữ nguyên sau reboot.</p></div></div>${renderPrinters()}${editing ? renderEditor(editing) : ''}</section>
   </div></div>`;
   bindDashboardEvents();
+}
+
+function renderPrintProfile(): string {
+  if (!printProfile) return '<section class="card empty">Không đọc được cấu hình mẫu in local.</section>';
+  const { profile, sync, font_warning: fontWarning } = printProfile;
+  const settings = profile.template_settings;
+  const option = (value: string, label: string, selected: boolean) => `<option value="${esc(value)}" ${selected ? 'selected' : ''}>${esc(label)}</option>`;
+  const check = (name: keyof TemplateSettings, label: string) => `<label class="check-row"><input type="checkbox" name="${esc(name)}" ${settings[name] ? 'checked' : ''} /> ${esc(label)}</label>`;
+  return `<section class="print-profile-section"><div class="section-head"><div><p class="eyebrow">Mẫu in local</p><h2>Cấu hình nội dung bản in</h2><p class="subtle">Lưu trên gateway này; không thay đổi cấu hình tài khoản trên hệ thống.</p></div><div class="actions"><button class="secondary" id="sync-print-profile" type="button">Đồng bộ từ quán</button><button class="secondary" id="restore-server-print-profile" type="button">Khôi phục mẫu server</button><button class="primary" type="submit" form="print-profile-form">Lưu local</button></div></div>${sync.warning ? `<p class="warning">${esc(sync.warning)}</p>` : ''}${sync.last_synced_at || sync.local_edited_at ? `<p class="subtle sync-meta">${sync.last_synced_at ? `Đồng bộ lần cuối: ${esc(sync.last_synced_at)}` : 'Chưa có lần đồng bộ nào'}${sync.local_edited_at ? ` · Sửa local: ${esc(sync.local_edited_at)}` : ''}</p>` : ''}${fontWarning ? `<p class="warning">${esc(fontWarning)}</p>` : ''}<form id="print-profile-form" class="profile-grid"><section class="card template-card"><p class="eyebrow">Hóa đơn</p><h3>Mẫu receipt</h3><div class="field"><label for="receipt-template">Kiểu hóa đơn</label><select id="receipt-template" name="receipt_template">${option('modern', 'Modern', settings.receipt_template === 'modern')}${option('classic', 'Classic', settings.receipt_template === 'classic')}${option('compact', 'Compact', settings.receipt_template === 'compact')}${option('detailed', 'Detailed', settings.receipt_template === 'detailed')}</select></div><div class="grid-2 profile-fields"><div class="field"><label for="store-name">Tên cửa hàng</label><input id="store-name" name="store_name" value="${esc(profile.store_name)}" autocomplete="organization" /></div><div class="field"><label for="store-name-ja">Tên cửa hàng (JA)</label><input id="store-name-ja" name="store_name_ja" value="${esc(profile.store_name_ja)}" /></div><div class="field"><label for="phone">Số điện thoại</label><input id="phone" name="phone" value="${esc(profile.phone)}" autocomplete="tel" /></div><div class="field"><label for="currency">Tiền tệ</label><input id="currency" name="currency" value="${esc(profile.currency)}" maxlength="8" /></div><div class="field"><label for="tax-id">Mã số thuế</label><input id="tax-id" name="tax_id" value="${esc(profile.tax_id)}" maxlength="80" /></div><div class="field full"><label for="address">Địa chỉ</label><textarea id="address" name="address" rows="2">${esc(profile.address)}</textarea></div><div class="field"><label for="header-vi">Header (VI)</label><textarea id="header-vi" name="header_text_vi" rows="2">${esc(profile.header_text_vi)}</textarea></div><div class="field"><label for="header-ja">Header (JA)</label><textarea id="header-ja" name="header_text_ja" rows="2">${esc(profile.header_text_ja)}</textarea></div><div class="field"><label for="footer-vi">Footer (VI)</label><textarea id="footer-vi" name="footer_text_vi" rows="2">${esc(profile.footer_text_vi)}</textarea></div><div class="field"><label for="footer-ja">Footer (JA)</label><textarea id="footer-ja" name="footer_text_ja" rows="2">${esc(profile.footer_text_ja)}</textarea></div></div><fieldset class="check-grid"><legend>Thông tin hiển thị</legend>${check('show_order_number', 'Số đơn hàng')}${check('show_table', 'Bàn')}${check('show_date_time', 'Ngày giờ')}${check('show_staff_name', 'Nhân viên')}${check('show_qr_code', 'QR')}${check('show_time_seated', 'Thời gian ngồi')}</fieldset></section><section class="card template-card"><p class="eyebrow">Bếp</p><h3>Mẫu kitchen</h3><div class="field"><label for="kitchen-template">Kiểu phiếu bếp</label><select id="kitchen-template" name="kitchen_template">${option('standard', 'Standard', settings.kitchen_template === 'standard')}${option('compact', 'Compact', settings.kitchen_template === 'compact')}${option('checklist', 'Checklist', settings.kitchen_template === 'checklist')}</select></div><p class="muted">Mẫu bếp được worker dùng khi xử lý job kitchen local.</p></section></form><section class="card preview-card"><div class="section-head"><div><p class="eyebrow">Kiểm tra</p><h3>Print preview</h3><p class="subtle">Preview dùng cấu hình đã lưu local.</p></div><div class="actions"><button class="secondary" data-preview="receipt" type="button">Preview receipt</button><button class="secondary" data-preview="kitchen" type="button">Preview kitchen</button></div></div>${preview ? `<p class="subtle">${esc(preview.type)} · ${esc(preview.template)} · ${esc(preview.paper_width_mm)} mm</p><pre id="preview-output" class="preview-output">${esc(preview.text)}</pre>` : '<div class="empty">Chưa có bản xem thử.</div>'}</section></section>`;
 }
 
 function renderScan(): string {
@@ -187,7 +227,8 @@ function renderEditor(printer: Printer): string {
   const devices = scan?.devices.map((item) => `<option value="${esc(item.uri)}">${esc(item.uri)}</option>`).join('') ?? '';
   const models = scan?.models.map((item) => `<option value="${esc(item.name)}">${esc(item.name)} — ${esc(item.description)}</option>`).join('') ?? '';
   const queues = scan?.queues.map((item) => `<option value="${esc(item.name)}">${esc(item.name)}</option>`).join('') ?? '';
-  return `<section class="card editor" id="editor"><div class="section-head"><div><h2>${printer.id ? 'Sửa printer profile' : 'Thêm printer profile'}</h2><p class="subtle">Queue và driver chỉ được server chấp nhận nếu CUPS xác nhận.</p></div><button class="secondary" id="cancel-editor">Đóng</button></div><form id="printer-form" class="form-stack" data-id="${esc(printer.id)}"><div class="grid-2"><div class="field"><label for="p-name">Tên hiển thị</label><input id="p-name" name="name" value="${esc(printer.name)}" required /></div><div class="field"><label for="p-role">Vai trò</label><select id="p-role" name="role">${option('receipt', 'Receipt', printer.role === 'receipt')}${option('kitchen', 'Kitchen', printer.role === 'kitchen')}${option('qr', 'QR', printer.role === 'qr')}${option('cash_drawer', 'Két tiền', printer.role === 'cash_drawer')}</select></div></div><div class="grid-3"><div class="field"><label for="p-connection">Kết nối</label><select id="p-connection" name="connection_type">${option('usb', 'USB / CUPS', printer.connection_type === 'usb')}${option('network', 'Mạng TCP', printer.connection_type === 'network')}${option('bluetooth', 'Bluetooth / CUPS', printer.connection_type === 'bluetooth')}</select></div><div class="field"><label for="p-protocol">Protocol</label><select id="p-protocol" name="protocol">${option('escpos', 'ESC/POS raw', printer.protocol === 'escpos')}${option('star_cups', 'Star CUPS', printer.protocol === 'star_cups')}</select></div><div class="field"><label for="p-paper">Khổ giấy</label><select id="p-paper" name="paper_width_mm">${option('80', '80 mm', printer.paper_width_mm !== 58)}${option('58', '58 mm', printer.paper_width_mm === 58)}</select></div></div><div class="grid-2"><div class="field"><label for="p-queue">CUPS queue</label><input id="p-queue" name="cups_queue" list="queue-list" value="${esc(printer.cups_queue ?? '')}" placeholder="receipt_usb" /><datalist id="queue-list">${queues}</datalist></div><div class="field"><label for="p-uri">Device URI</label><input id="p-uri" name="cups_device_uri" list="device-list" value="${esc(printer.cups_device_uri ?? '')}" placeholder="usb://..." /><datalist id="device-list">${devices}</datalist></div></div><div class="grid-2"><div class="field"><label for="p-model">CUPS model/driver</label><input id="p-model" name="printer_model" list="model-list" value="${esc(printer.printer_model)}" placeholder="raw hoặc model từ lpinfo -m" /><datalist id="model-list">${models}</datalist></div><div class="field"><label for="p-host">Host mạng (nếu dùng TCP)</label><input id="p-host" name="host" value="${esc(printer.host ?? '')}" placeholder="192.168.1.20" /></div></div><div class="grid-3"><div class="field"><label for="p-area">Area</label><input id="p-area" name="area" value="${esc(printer.area)}" /></div><div class="field"><label for="p-station">Station</label><input id="p-station" name="station" value="${esc(printer.station)}" /></div><div class="field"><label for="p-port">Port</label><input id="p-port" name="port" type="number" min="1" max="65535" value="${esc(printer.port)}" /></div></div><div class="grid-3"><label class="check-row"><input type="checkbox" name="cut" ${printer.cut ? 'checked' : ''} /> Cut</label><label class="check-row"><input type="checkbox" name="beep" ${printer.beep ? 'checked' : ''} /> Beep</label><label class="check-row"><input type="checkbox" name="cash_drawer" ${printer.cash_drawer ? 'checked' : ''} /> Cash drawer</label></div><div class="actions right"><button class="primary" type="submit">Lưu profile</button><button class="secondary" type="button" id="setup-queue" ${printer.id ? '' : 'disabled'}>Tạo/cập nhật queue</button></div></form></section>`;
+  const hasAdvancedValue = Boolean(printer.cups_queue || printer.cups_device_uri || printer.host || (printer.printer_model && printer.printer_model !== 'raw'));
+  return `<section class="card editor" id="editor"><div class="section-head"><div><h2>${printer.id ? 'Sửa printer profile' : 'Thêm printer profile'}</h2><p class="subtle">Queue và driver chỉ được server chấp nhận nếu CUPS xác nhận.</p></div><button class="secondary" id="cancel-editor">Đóng</button></div><form id="printer-form" class="form-stack" data-id="${esc(printer.id)}"><div class="grid-2"><div class="field"><label for="p-name">Tên hiển thị</label><input id="p-name" name="name" value="${esc(printer.name)}" required /></div><div class="field"><label for="p-role">Vai trò</label><select id="p-role" name="role">${option('receipt', 'Receipt', printer.role === 'receipt')}${option('kitchen', 'Kitchen', printer.role === 'kitchen')}${option('qr', 'QR', printer.role === 'qr')}${option('cash_drawer', 'Két tiền', printer.role === 'cash_drawer')}</select></div></div><div class="grid-3"><div class="field"><label for="p-connection">Kết nối</label><select id="p-connection" name="connection_type">${option('usb', 'USB / CUPS', printer.connection_type === 'usb')}${option('network', 'Mạng TCP', printer.connection_type === 'network')}${option('bluetooth', 'Bluetooth / CUPS', printer.connection_type === 'bluetooth')}</select></div><div class="field"><label for="p-protocol">Protocol</label><select id="p-protocol" name="protocol">${option('escpos', 'ESC/POS raw', printer.protocol === 'escpos')}${option('star_cups', 'Star CUPS', printer.protocol === 'star_cups')}</select></div><div class="field"><label for="p-paper">Khổ giấy</label><select id="p-paper" name="paper_width_mm">${option('80', '80 mm', printer.paper_width_mm !== 58)}${option('58', '58 mm', printer.paper_width_mm === 58)}</select></div></div><details class="advanced-fields" ${hasAdvancedValue ? 'open' : ''}><summary>Thiết lập nâng cao: queue, URI, model và host</summary><div class="form-stack"><div class="grid-2"><div class="field"><label for="p-queue">CUPS queue</label><input id="p-queue" name="cups_queue" list="queue-list" value="${esc(printer.cups_queue ?? '')}" placeholder="receipt_usb" /><datalist id="queue-list">${queues}</datalist></div><div class="field"><label for="p-uri">Device URI</label><input id="p-uri" name="cups_device_uri" list="device-list" value="${esc(printer.cups_device_uri ?? '')}" placeholder="usb://..." /><datalist id="device-list">${devices}</datalist></div></div><div class="grid-2"><div class="field"><label for="p-model">CUPS model/driver</label><input id="p-model" name="printer_model" list="model-list" value="${esc(printer.printer_model)}" placeholder="raw hoặc model từ lpinfo -m" /><datalist id="model-list">${models}</datalist></div><div class="field"><label for="p-host">Host mạng (nếu dùng TCP)</label><input id="p-host" name="host" value="${esc(printer.host ?? '')}" placeholder="192.168.1.20" /></div></div></div></details><div class="grid-3"><div class="field"><label for="p-area">Area</label><input id="p-area" name="area" value="${esc(printer.area)}" /></div><div class="field"><label for="p-station">Station</label><input id="p-station" name="station" value="${esc(printer.station)}" /></div><div class="field"><label for="p-port">Port</label><input id="p-port" name="port" type="number" min="1" max="65535" value="${esc(printer.port)}" /></div></div><div class="grid-3"><label class="check-row"><input type="checkbox" name="cut" ${printer.cut ? 'checked' : ''} /> Cut</label><label class="check-row"><input type="checkbox" name="beep" ${printer.beep ? 'checked' : ''} /> Beep</label><label class="check-row"><input type="checkbox" name="cash_drawer" ${printer.cash_drawer ? 'checked' : ''} /> Cash drawer</label></div><div class="actions right"><button class="primary" type="submit">Lưu profile</button><button class="secondary" type="button" id="setup-queue" ${printer.id ? '' : 'disabled'}>Tạo/cập nhật queue</button></div></form></section>`;
 }
 
 function bindDashboardEvents(): void {
@@ -195,12 +236,67 @@ function bindDashboardEvents(): void {
   document.querySelector<HTMLButtonElement>('#refresh')?.addEventListener('click', () => void run(loadDashboard));
   document.querySelector<HTMLButtonElement>('#new-printer')?.addEventListener('click', () => { editing = { id: '', name: '', connection_type: 'usb', protocol: 'escpos', port: 9100, printer_model: 'raw', role: 'receipt', area: '', station: '', paper_width_mm: 80, cut: true, beep: false, cash_drawer: false, enabled: true }; renderDashboard(); document.querySelector('#editor')?.scrollIntoView({ behavior: 'smooth' }); });
   document.querySelector<HTMLButtonElement>('#scan')?.addEventListener('click', () => void run(async () => { const result = await api<CupsScan & { ok: boolean }>('/api/cups/scan', { method: 'POST', body: '{}' }); scan = result; renderDashboard(); showToast('Đã quét CUPS.'); }));
+  document.querySelector<HTMLButtonElement>('#sync-print-profile')?.addEventListener('click', () => void syncPrintProfile());
+  document.querySelector<HTMLButtonElement>('#restore-server-print-profile')?.addEventListener('click', () => void syncPrintProfile(true));
+  document.querySelector<HTMLFormElement>('#print-profile-form')?.addEventListener('submit', (event) => void savePrintProfile(event));
+  document.querySelectorAll<HTMLButtonElement>('[data-preview]').forEach((button) => button.addEventListener('click', () => void previewPrint(button.dataset.preview as 'receipt' | 'kitchen')));
   document.querySelector<HTMLButtonElement>('#cancel-editor')?.addEventListener('click', () => { editing = null; renderDashboard(); });
   document.querySelector<HTMLFormElement>('#printer-form')?.addEventListener('submit', (event) => void savePrinter(event));
   document.querySelector<HTMLButtonElement>('#setup-queue')?.addEventListener('click', () => void setupQueue());
   document.querySelectorAll<HTMLButtonElement>('[data-edit]').forEach((button) => button.addEventListener('click', () => { editing = printers.find((item) => item.id === button.dataset.edit) ?? null; renderDashboard(); document.querySelector('#editor')?.scrollIntoView({ behavior: 'smooth' }); }));
   document.querySelectorAll<HTMLButtonElement>('[data-delete]').forEach((button) => button.addEventListener('click', () => void deletePrinter(button.dataset.delete ?? '')));
   document.querySelectorAll<HTMLButtonElement>('[data-test]').forEach((button) => button.addEventListener('click', () => void testPrinter(button.dataset.id ?? '', button.dataset.test ?? '')));
+}
+
+async function savePrintProfile(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  const form = event.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const profile: Json = {
+    store_name: data.get('store_name') ?? '',
+    store_name_ja: data.get('store_name_ja') ?? '',
+    address: data.get('address') ?? '',
+    phone: data.get('phone') ?? '',
+    tax_id: data.get('tax_id') ?? '',
+    currency: data.get('currency') ?? '',
+    header_text_vi: data.get('header_text_vi') ?? '',
+    header_text_ja: data.get('header_text_ja') ?? '',
+    footer_text_vi: data.get('footer_text_vi') ?? '',
+    footer_text_ja: data.get('footer_text_ja') ?? '',
+    template_settings: {
+      receipt_template: data.get('receipt_template'),
+      kitchen_template: data.get('kitchen_template'),
+      show_order_number: data.has('show_order_number'),
+      show_table: data.has('show_table'),
+      show_date_time: data.has('show_date_time'),
+      show_staff_name: data.has('show_staff_name'),
+      show_qr_code: data.has('show_qr_code'),
+      show_time_seated: data.has('show_time_seated'),
+    },
+  };
+  await run(async () => { printProfile = await api<PrintProfileResponse>('/api/print-profile', { method: 'PUT', body: JSON.stringify(profile) }); preview = null; renderDashboard(); showToast('Đã lưu cấu hình mẫu in local.'); });
+}
+
+async function previewPrint(type: 'receipt' | 'kitchen'): Promise<void> {
+  await run(async () => { preview = await api<PreviewResponse>('/api/print-profile/preview', { method: 'POST', body: JSON.stringify({ type }) }); renderDashboard(); showToast(`Đã tạo preview ${type}.`); });
+}
+
+async function syncPrintProfile(replaceLocal = false): Promise<void> {
+  if (replaceLocal && !window.confirm('Khôi phục mẫu server sẽ ghi đè mọi thay đổi local. Tiếp tục?')) return;
+  await run(async () => {
+    let result: PrintProfileResponse;
+    try {
+      result = await api<PrintProfileResponse>('/api/print-profile/sync', { method: 'POST', body: JSON.stringify({ replace_local: replaceLocal }) });
+    } catch (error) {
+      if (replaceLocal || !(error instanceof ApiError) || error.statusCode !== 409 || error.code !== 'LOCAL_EDITS_EXIST') throw error;
+      if (!window.confirm('Cấu hình local đã được sửa. Ghi đè các thay đổi local bằng cấu hình từ quán?')) return;
+      result = await api<PrintProfileResponse>('/api/print-profile/sync', { method: 'POST', body: JSON.stringify({ replace_local: true }) });
+    }
+    printProfile = result;
+    preview = null;
+    renderDashboard();
+    showToast('Đã đồng bộ cấu hình mẫu in.');
+  });
 }
 
 async function savePrinter(event: SubmitEvent): Promise<void> {

@@ -5,6 +5,7 @@ import 'cups.dart';
 import 'escpos.dart';
 import 'gateway_api.dart';
 import 'models.dart';
+import 'print_profile.dart';
 
 class GatewayPrinterService {
   GatewayPrinterService({
@@ -16,21 +17,46 @@ class GatewayPrinterService {
   final CupsPrintTransport _cups;
   final GatewayPrintRenderer _renderer;
 
-  Future<void> printJob(GatewayJob job, PrinterProfile profile) async {
+  Future<void> printJob(
+    GatewayJob job,
+    PrinterProfile profile, {
+    StorePrintProfile? printProfile,
+  }) async {
     final effective = profile.copyWith(
       capabilities: await probeCapabilities(profile),
     );
-    final document = await _renderer.renderJob(job, effective);
+    final document = await _renderer.renderJob(
+      job,
+      effective,
+      printProfile: printProfile,
+    );
     await _send(effective, document);
   }
 
-  Future<void> test(PrinterProfile profile, TestPrintAction action) async {
+  Future<void> test(
+    PrinterProfile profile,
+    TestPrintAction action, {
+    StorePrintProfile? printProfile,
+  }) async {
     final effective = profile.copyWith(
       capabilities: await probeCapabilities(profile),
     );
-    final document = await _renderer.renderTest(effective, action: action);
+    final document = await _renderer.renderTest(
+      effective,
+      action: action,
+      printProfile: printProfile,
+    );
     await _send(effective, document);
   }
+
+  String previewText({required String type, StorePrintProfile? printProfile}) {
+    return _renderer.renderSamplePreviewText(
+      jobType: type == 'kitchen' ? 'kitchen_ticket' : 'receipt',
+      printProfile: printProfile,
+    );
+  }
+
+  String? get fontWarning => _renderer.fontWarning;
 
   Future<PrinterHealth> testConnection(PrinterProfile profile) async {
     if (profile.usesCups) {
@@ -102,14 +128,17 @@ class GatewayWorker {
     required this.config,
     required this.printers,
     required SupabaseGatewayClient api,
+    StorePrintProfile? printProfile,
     GatewayPrinterService? printerService,
     void Function(String message)? log,
   }) : _api = api,
+       printProfile = printProfile ?? StorePrintProfile(),
        _printerService = printerService ?? GatewayPrinterService(),
        _log = log ?? print;
 
   final GatewayConfig config;
   final List<PrinterProfile> printers;
+  final StorePrintProfile printProfile;
   final SupabaseGatewayClient _api;
   final GatewayPrinterService _printerService;
   final void Function(String message) _log;
@@ -157,7 +186,7 @@ class GatewayWorker {
     final started = DateTime.now();
     try {
       final profile = _selectProfile(job);
-      await _printerService.printJob(job, profile);
+      await _printerService.printJob(job, profile, printProfile: printProfile);
     } catch (error) {
       final duration = DateTime.now().difference(started);
       try {

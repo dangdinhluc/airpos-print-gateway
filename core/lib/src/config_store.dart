@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'models.dart';
+import 'print_profile.dart';
 
 class GatewayConfigStore {
   GatewayConfigStore({String? homeDirectory, String? configDirectory})
@@ -17,6 +18,8 @@ class GatewayConfigStore {
   File get configFile => File('${rootDirectory.path}/config.json');
 
   File get printersFile => File('${rootDirectory.path}/printers.json');
+
+  File get printProfileFile => File('${rootDirectory.path}/print-profile.json');
 
   Future<GatewayConfig?> loadConfig() async {
     final json = await _readObject(configFile);
@@ -48,6 +51,29 @@ class GatewayConfigStore {
     await _writeObject(printersFile, <String, Object?>{
       'printers': printers.map((printer) => printer.toJson()).toList(),
     });
+  }
+
+  Future<StorePrintProfile> loadPrintProfile() async {
+    final json = await _readObject(printProfileFile);
+    return json == null
+        ? StorePrintProfile()
+        : StorePrintProfile.fromJson(json);
+  }
+
+  Future<void> savePrintProfile(
+    StorePrintProfile profile, {
+    bool markLocalEdited = true,
+  }) async {
+    final next = markLocalEdited ? profile.markLocalEdited() : profile;
+    await _writeObject(printProfileFile, next.toJson());
+  }
+
+  Future<void> importPrintProfileSeed(Map<String, dynamic> response) async {
+    final profile = StorePrintProfile.fromSeed(response);
+    await savePrintProfile(
+      profile.lastSyncedAt == null ? profile.markSynced() : profile,
+      markLocalEdited: false,
+    );
   }
 
   Future<void> _writeObject(File file, Map<String, Object?> value) async {

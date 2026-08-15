@@ -76,6 +76,7 @@ class GatewayRuntime {
       }
 
       final printers = await store.loadPrinters();
+      final printProfile = await store.loadPrintProfile();
       final api = SupabaseGatewayClient.fromSettings(
         settings,
         tenantId: config.tenantId,
@@ -87,6 +88,7 @@ class GatewayRuntime {
           config: config,
           printers: printers,
           api: api,
+          printProfile: printProfile,
           printerService: _printerService,
           log: _log,
         );

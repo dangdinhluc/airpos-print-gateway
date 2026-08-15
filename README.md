@@ -35,17 +35,18 @@ npm run check
 npm run build
 ```
 
-Build `.deb` cần Dart, Node.js, `dpkg-deb` và hai biến chỉ được truyền ở máy
-build/CI:
+Build `.deb` cần Dart, Node.js, `dpkg-deb`, Python Pillow và một font Noto
+Sans CJK local; hai biến Supabase chỉ được truyền ở máy build/CI:
 
 ```bash
 export AIRPOS_SUPABASE_URL='https://your-project.supabase.co'
 export AIRPOS_SUPABASE_ANON_KEY='build-time-anon-key'
-./packaging/build-deb.sh 2.0.0
+export AIRPOS_BITMAP_FONT='/path/to/NotoSansCJK-Regular.ttc'
+./packaging/build-deb.sh 2.1.0 --font "$AIRPOS_BITMAP_FONT"
 ```
 
 Artifact release được tạo bởi `.github/workflows/print-gateway-release.yml`
-khi push tag dạng `print-gateway-v2.0.0`:
+khi push tag dạng `print-gateway-v2.1.0`:
 
 - `airpos-print-gateway_amd64.deb`
 - `SHA256SUMS`
