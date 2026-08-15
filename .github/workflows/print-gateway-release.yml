@@ -1,0 +1,78 @@
+name: Print gateway release
+
+on:
+  push:
+    tags:
+      - 'print-gateway-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-22.04
+    env:
+      AIRPOS_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      AIRPOS_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Validate release settings
+        run: |
+          test -n "$AIRPOS_SUPABASE_URL" || {
+            echo '::error::Repository variable VITE_SUPABASE_URL is missing.'
+            exit 1
+          }
+          test -n "$AIRPOS_SUPABASE_ANON_KEY" || {
+            echo '::error::Repository secret VITE_SUPABASE_ANON_KEY is missing.'
+            exit 1
+          }
+
+      - name: Build web assets
+        working-directory: web
+        run: npm ci && npm run check && npm run build
+
+      - name: Test headless core
+        working-directory: core
+        run: dart pub get && dart analyze lib bin test && dart test
+
+      - name: Build Debian package
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          version="${VERSION#print-gateway-v}"
+          ./packaging/build-deb.sh "$version"
+          cp "dist/airpos-print-gateway_${version}_amd64.deb" dist/airpos-print-gateway_amd64.deb
+          (cd dist && sha256sum airpos-print-gateway_amd64.deb > SHA256SUMS)
+
+      - name: Validate package
+        run: |
+          dpkg-deb --info dist/airpos-print-gateway_amd64.deb
+          dpkg-deb --contents dist/airpos-print-gateway_amd64.deb
+          dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F '/opt/airpos-print-gateway/airpos_print_gatewayd'
+          dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F '/opt/airpos-print-gateway/web/index.html'
+          dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F 'airpos-print-gateway.service'
+          file build/airpos_print_gatewayd | grep -E 'ELF 64-bit.*x86-64'
+          (cd dist && sha256sum --check SHA256SUMS)
+          bash -n packaging/install.sh packaging/build-deb.sh packaging/postinst packaging/prerm packaging/postrm
+
+      - name: ShellCheck packaging
+        run: shellcheck packaging/*.sh
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/airpos-print-gateway_amd64.deb dist/SHA256SUMS --generate-notes

@@ -1,0 +1,9 @@
+Package: airpos-print-gateway
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: cups, cups-client, adduser, systemd
+Maintainer: AirPOS
+Description: AirPOS Ubuntu USB/CUPS print gateway
+ Headless print worker with a loopback browser setup UI.

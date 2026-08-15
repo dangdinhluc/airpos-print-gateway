@@ -1,0 +1,14 @@
+name: airpos_print_gateway_core
+description: Shared headless core for the AirPOS Ubuntu print gateway.
+publish_to: none
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  http: ^1.2.2
+  image: ^4.8.0
+  qr: ^3.0.2
+
+dev_dependencies:
+  test: ^1.25.8

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! getent group airpos-gateway >/dev/null 2>&1; then
+  groupadd --system airpos-gateway
+fi
+if ! id airpos-gateway >/dev/null 2>&1; then
+  useradd --system --gid airpos-gateway --home-dir /var/lib/airpos-print-gateway \
+    --no-create-home --shell /usr/sbin/nologin airpos-gateway
+fi
+if ! getent group lpadmin >/dev/null 2>&1; then
+  groupadd --system lpadmin
+fi
+usermod --append --groups lp,lpadmin airpos-gateway
+
+# Remove files owned by the pre-2.0 Flutter desktop package on upgrade.
+rm -f /opt/airpos-print-gateway/airpos_print_gateway \
+  /opt/airpos-print-gateway/airpos_print_gateway_gui \
+  /usr/share/applications/airpos-print-gateway.desktop
+rm -rf /opt/airpos-print-gateway/lib /opt/airpos-print-gateway/data
+
+install -d -m 0770 -o airpos-gateway -g airpos-gateway \
+  /var/lib/airpos-print-gateway
+chown -R airpos-gateway:airpos-gateway /var/lib/airpos-print-gateway
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+  systemctl enable --now airpos-print-gateway.service
+fi

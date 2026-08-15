@@ -1,0 +1,26 @@
+[Unit]
+Description=AirPOS Ubuntu print gateway daemon
+Requires=cups.service
+After=cups.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=airpos-gateway
+Group=airpos-gateway
+SupplementaryGroups=lp lpadmin
+WorkingDirectory=/opt/airpos-print-gateway
+Environment=AIRPOS_PRINT_GATEWAY_CONFIG_DIR=/var/lib/airpos-print-gateway
+Environment=AIRPOS_GATEWAY_WEB_ROOT=/opt/airpos-print-gateway/web
+ExecStart=/opt/airpos-print-gateway/airpos_print_gatewayd
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/airpos-print-gateway
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
