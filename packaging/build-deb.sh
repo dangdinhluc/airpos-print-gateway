@@ -26,9 +26,9 @@ cd "$script_dir"
 install -d build
 dart_args=(
   compile exe core/bin/airpos_print_gatewayd.dart
-  "-D AIRPOS_SUPABASE_URL=$AIRPOS_SUPABASE_URL"
-  "-D AIRPOS_SUPABASE_ANON_KEY=$AIRPOS_SUPABASE_ANON_KEY"
-  "-D AIRPOS_GATEWAY_APP_VERSION=ubuntu-$version"
+  "-DAIRPOS_SUPABASE_URL=$AIRPOS_SUPABASE_URL"
+  "-DAIRPOS_SUPABASE_ANON_KEY=$AIRPOS_SUPABASE_ANON_KEY"
+  "-DAIRPOS_GATEWAY_APP_VERSION=ubuntu-$version"
   -o build/airpos_print_gatewayd
 )
 dart "${dart_args[@]}"
