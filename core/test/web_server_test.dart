@@ -218,6 +218,36 @@ void main() {
     expect(saved.localEditedAt, isNotNull);
   });
 
+  test('imports store print profile only when requested', () async {
+    final directory = await Directory.systemTemp.createTemp('airpos-import-');
+    final webRoot = await Directory('${directory.path}/web').create();
+    await File('${webRoot.path}/index.html').writeAsString('gateway-ui');
+    addTearDown(() => directory.delete(recursive: true));
+    final store = GatewayConfigStore(configDirectory: directory.path);
+    await store.saveConfig(const GatewayConfig(
+      tenantId: 'tenant-1', gatewayId: 'gateway-1', gatewayToken: 'gateway-token',
+    ));
+    await store.savePrintProfile(StorePrintProfile(storeName: 'Local Store'));
+    final fake = _FakeControlPlaneClient(singleTenant: true);
+    final server = GatewayWebServer(
+      settings: const GatewayRuntimeSettings(supabaseUrl: 'https://control.example.test', supabaseAnonKey: 'compiled-anon-key', webPort: 0),
+      store: store, webRoot: webRoot,
+      snapshot: () => const GatewayRuntimeSnapshot(state: 'online'),
+      onConfigurationChanged: () {},
+      clientFactory: (_, {tenantId = '', gatewayId = '', gatewayToken = ''}) => SupabaseGatewayClient(
+        baseUrl: 'https://control.example.test', anonKey: 'compiled-anon-key', tenantId: tenantId, gatewayId: gatewayId, gatewayToken: gatewayToken, client: fake,
+      ),
+    );
+    await server.start();
+    addTearDown(server.stop);
+
+    final response = await _post(server.boundPort, '/api/print-profile/import', <String, Object?>{});
+
+    expect(response.statusCode, HttpStatus.ok);
+    expect(fake.seedCalls, 1);
+    expect((await store.loadPrintProfile()).storeName, 'Seed Store');
+  });
+
   test('print profile PUT rejects invalid input before saving', () async {
     final directory = await Directory.systemTemp.createTemp('airpos-invalid-');
     final webRoot = await Directory('${directory.path}/web').create();

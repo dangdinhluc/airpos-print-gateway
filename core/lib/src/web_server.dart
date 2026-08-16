@@ -164,6 +164,10 @@ class GatewayWebServer {
       await _previewPrintProfile(request);
       return;
     }
+    if (request.method == 'POST' && path == '/api/print-profile/import') {
+      await _importPrintProfile(request);
+      return;
+    }
     if (request.method == 'POST' && path == '/api/cups/scan') {
       await _scanCups(request);
       return;
@@ -339,6 +343,34 @@ class GatewayWebServer {
       'ok': true,
       'profile': _printProfileJson(saved),
       'sync': _printProfileSyncJson(saved),
+      'font_warning': _printerService.fontWarning,
+    });
+  }
+
+  Future<void> _importPrintProfile(HttpRequest request) async {
+    final config = await store.loadConfig();
+    if (config == null || !config.isProvisioned) {
+      throw const _WebException(
+        HttpStatus.conflict,
+        'GATEWAY_NOT_CONFIGURED',
+        'Hãy đăng nhập và chọn quán trước khi tải thông tin quán.',
+      );
+    }
+    final client = _client(
+      tenantId: config.tenantId,
+      gatewayId: config.gatewayId,
+      gatewayToken: config.gatewayToken,
+    );
+    try {
+      await store.importPrintProfileSeed(await client.fetchStorePrintSeed());
+    } finally {
+      client.close();
+    }
+    final profile = await store.loadPrintProfile();
+    await _json(request, HttpStatus.ok, <String, Object?>{
+      'ok': true,
+      'profile': _printProfileJson(profile),
+      'sync': _printProfileSyncJson(profile),
       'font_warning': _printerService.fontWarning,
     });
   }
