@@ -2,13 +2,14 @@ class StarMarkup {
   const StarMarkup._();
 
   static String receipt(String text) {
-    final lines = <String>['[align: center]'];
+    final lines = <String>[
+      '[font: b]',
+      '[linespacing: min]',
+      '[align: center]',
+    ];
     for (final raw in text.split('\n')) {
       final line = raw.replaceAll(RegExp(r'^[\x01-\x08]+'), '').trimRight();
-      if (line.isEmpty) {
-        lines.add('[feed: 1]');
-        continue;
-      }
+      if (line.isEmpty) continue;
       if (RegExp(r'^[-─]{3,}$').hasMatch(line)) {
         lines.add('[fixedWidth: text --------------------------------]');
         continue;
