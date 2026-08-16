@@ -195,6 +195,21 @@ void main() {
     );
   });
 
+  test(
+    'receipt item detail keeps quantity and unit price together on left',
+    () {
+      final text = renderer.renderPreviewText(
+        payload: <String, dynamic>{
+          'items': <Map<String, Object?>>[
+            <String, Object?>{'name': 'チロック', 'quantity': 1, 'line_total': 430},
+          ],
+        },
+        printProfile: _profile(receiptTemplate: 'detailed'),
+      );
+      expect(text, contains('1 x ¥430'));
+    },
+  );
+
   test('receipt amount column separates text from yen value', () {
     expect(splitReceiptAmountColumn('小計                         ¥1,480'), (
       '小計',

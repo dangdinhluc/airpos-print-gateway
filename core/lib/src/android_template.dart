@@ -782,10 +782,11 @@ class AndroidPrintTemplate {
       final unitPrice = _receiptItemUnitPrice(item, model.currency);
       final amount = _receiptItemAmount(item, quantityValue, model.currency);
       lines.addAll(_keyValueLines(name, amount, model.width));
-      final detail = unitPrice.isNotEmpty
-          ? '$quantity x $unitPrice'
-          : '${_receiptLabel('qty', model.languages)}: $quantity';
-      lines.addAll(_wrapText('    $detail', model.width));
+      final price = unitPrice.isEmpty ? amount : unitPrice;
+      final detail = price.isEmpty
+          ? '${_receiptLabel('qty', model.languages)}: $quantity'
+          : '$quantity x $price';
+      lines.addAll(_wrapText(detail, model.width));
       _appendReceiptItemOptions(lines, item, model, indent: '    ');
       _appendItemNotes(lines, item, model, indent: '    ');
     }
