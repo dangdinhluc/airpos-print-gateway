@@ -786,7 +786,7 @@ class AndroidPrintTemplate {
       final detail = price.isEmpty
           ? '${_receiptLabel('qty', model.languages)}: $quantity'
           : '$quantity x $price';
-      lines.addAll(_rightAlignedLines(detail, model.width));
+      lines.addAll(_wrapText(detail, model.width));
       _appendReceiptItemOptions(lines, item, model, indent: '    ');
       _appendItemNotes(lines, item, model, indent: '    ');
     }
@@ -1875,11 +1875,6 @@ String _centerText(String value, int width) {
   final padding = math.max(0, (width - _columnWidth(text)) ~/ 2);
   return '${_repeat(' ', padding)}$text';
 }
-
-List<String> _rightAlignedLines(String value, int width) => _wrapText(
-  value,
-  width,
-).map((line) => _padStartToColumns(line, width)).toList(growable: false);
 
 List<String> _keyValueLines(String left, String right, int width) {
   if (right.trim().isEmpty) return _wrapText(left, width);
