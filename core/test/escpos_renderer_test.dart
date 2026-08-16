@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:airpos_print_gateway_core/src/escpos.dart';
 import 'package:airpos_print_gateway_core/src/models.dart';
 import 'package:airpos_print_gateway_core/src/print_profile.dart';
+import 'package:image/image.dart' as image;
 import 'package:test/test.dart';
 
 void main() {
@@ -484,7 +486,14 @@ void main() {
 
     expect(document.raw, isFalse);
     expect(document.cupsOptions['orientation-requested'], '3');
-    expect(document.cupsOptions['media'], startsWith('Custom.80x'));
+    expect(document.cupsOptions['media'], startsWith('Custom.72x'));
+    final bitmap = image.decodePng(Uint8List.fromList(document.bytes))!;
+    for (final pixel in bitmap) {
+      expect(pixel.a, 255);
+      expect(pixel.r == 0 || pixel.r == 255, isTrue);
+      expect(pixel.g == 0 || pixel.g == 255, isTrue);
+      expect(pixel.b == 0 || pixel.b == 255, isTrue);
+    }
   });
 }
 

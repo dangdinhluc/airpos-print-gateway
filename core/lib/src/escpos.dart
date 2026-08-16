@@ -222,11 +222,13 @@ class GatewayPrintRenderer {
   }) async {
     final loadedFont = await _loadFont();
     final printable = loadedFont.font == null ? _ascii(text) : text;
-    final bitmap = _renderBitmap(
-      printable,
-      profile.paperWidthMm == 58 ? 384 : 576,
-      font: loadedFont.font ?? image.arial14,
-      qrData: qrData,
+    final bitmap = _binarize(
+      _renderBitmap(
+        printable,
+        profile.paperWidthMm == 58 ? 384 : 576,
+        font: loadedFont.font ?? image.arial14,
+        qrData: qrData,
+      ),
     );
     final forceCut = action == TestPrintAction.cut;
     final forceBeep = action == TestPrintAction.beep;
@@ -299,6 +301,19 @@ class GatewayPrintRenderer {
     });
   }
 
+  image.Image _binarize(image.Image source) {
+    for (final pixel in source) {
+      final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) ~/ 1000;
+      final value = luminance < 160 ? 0 : 255;
+      pixel
+        ..r = value
+        ..g = value
+        ..b = value
+        ..a = 255;
+    }
+    return source;
+  }
+
   List<int> _toEscPosRaster(
     image.Image bitmap, {
     required bool cut,
@@ -349,7 +364,7 @@ class GatewayPrintRenderer {
     return <String, String>{
       'orientation-requested': '3',
       'media':
-          'Custom.${profile.paperWidthMm}x${(bitmapHeight * 25.4 / 203).ceil()}mm',
+          'Custom.${profile.paperWidthMm == 58 ? 48 : 72}x${(bitmapHeight * 25.4 / 203).ceil()}mm',
       if (cut && profile.effectiveCapabilities.cut) 'PageCutType': 'PartialCut',
       if (cashDrawer && profile.effectiveCapabilities.cashDrawer)
         'CashDrawer': 'OpenDrawer1',
