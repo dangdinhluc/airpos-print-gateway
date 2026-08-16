@@ -130,7 +130,7 @@ function dotClass(value: string): string {
 
 function renderLogin(error = ''): void {
   app.innerHTML = `<div class="shell"><div class="container narrow"><section class="card login-card">
-    <div class="brand"><span class="brand-mark">↗</span><span>AirPOS Print Gateway</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>AirPOS Print Gateway</span></div>
     <p class="eyebrow">Thiết lập máy in</p><h1>Đăng nhập tài khoản quán</h1>
     <p class="muted">Gateway chạy nền trên máy Ubuntu này. Đăng nhập để gắn máy với quán của anh.</p>
     ${error ? `<p class="error">${esc(error)}</p>` : ''}
@@ -160,7 +160,7 @@ function renderLogin(error = ''): void {
 
 function renderTenantChoice(error = ''): void {
   app.innerHTML = `<div class="shell"><div class="container narrow"><section class="card login-card">
-    <div class="brand"><span class="brand-mark">↗</span><span>AirPOS Print Gateway</span></div>
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>AirPOS Print Gateway</span></div>
     <p class="eyebrow">Chọn quán</p><h1>Gateway sẽ gắn với quán nào?</h1><p class="muted">Chọn một quán để tiếp tục. Mỗi gateway chỉ kết nối một quán tại một thời điểm.</p>
     ${error ? `<p class="error">${esc(error)}</p>` : ''}<div class="tenant-list">${tenants.map((tenant) => `<button class="tenant-option" data-tenant="${esc(tenant.tenant_id)}"><span><span class="tenant-name">${esc(tenant.name)}</span><span class="tenant-meta">${esc(tenant.slug)} · ${esc(tenant.role)}</span></span><span>›</span></button>`).join('')}</div>
     <button class="secondary" id="back-login">Quay lại đăng nhập</button>
@@ -187,9 +187,9 @@ async function loadDashboard(): Promise<void> {
 
 function renderDashboard(): void {
   const worker = gatewayStatus?.worker ?? { state: 'starting' };
-  app.innerHTML = `<div class="shell"><header class="topbar"><div class="brand"><span class="brand-mark">↗</span><span>AirPOS Print Gateway</span></div><div class="top-actions"><span class="subtle">Chỉ truy cập trên máy này</span><button class="ghost" id="logout">Đăng xuất</button></div></header><div class="container">
+  app.innerHTML = `<div class="shell"><header class="topbar"><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>AirPOS Print Gateway</span></div><div class="top-actions"><span class="subtle">Chỉ truy cập trên máy này</span><button class="ghost" id="logout">Đăng xuất</button></div></header><div class="container">
     <div class="dashboard-head"><div><p class="eyebrow">Gateway Ubuntu</p><h1>Quản lý máy in</h1><p class="muted">Worker chạy nền kể cả khi anh đóng trình duyệt.</p></div><div class="actions"><button class="secondary" id="refresh">Làm mới</button><button class="primary" id="new-printer">Thêm máy in</button></div></div>
-    <div class="status-grid"><div class="card metric"><span class="metric-label">Worker</span><div class="metric-value"><span class="dot ${dotClass(worker.state)}"></span>${esc(worker.state === 'online' ? 'Đang chạy' : worker.state === 'not_configured' ? 'Chưa cấu hình' : 'Cần kiểm tra')}</div></div><div class="card metric"><span class="metric-label">CUPS</span><div class="metric-value"><span class="dot ${scan ? 'ok' : 'warn'}"></span>${scan ? 'Đã quét' : 'Chưa quét'}</div></div><div class="card metric"><span class="metric-label">Job gần nhất</span><div class="metric-value">${esc(worker.last_job_count ?? 0)}</div></div><div class="card metric"><span class="metric-label">Phiên bản</span><div class="metric-value">Ubuntu 2.0</div></div></div>
+    <div class="status-grid"><div class="card metric"><span class="metric-label">Worker</span><div class="metric-value"><span class="dot ${dotClass(worker.state)}"></span>${esc(worker.state === 'online' ? 'Đang chạy' : worker.state === 'not_configured' ? 'Chưa cấu hình' : 'Cần kiểm tra')}</div></div><div class="card metric"><span class="metric-label">CUPS</span><div class="metric-value"><span class="dot ${scan ? 'ok' : 'warn'}"></span>${scan ? 'Đã quét' : 'Chưa quét'}</div></div><div class="card metric"><span class="metric-label">Job gần nhất</span><div class="metric-value">${esc(worker.last_job_count ?? 0)}</div></div><div class="card metric"><span class="metric-label">Gateway</span><div class="metric-value">Local</div></div></div>
     ${worker.last_error ? `<p class="error">${esc(worker.last_error)}</p>` : ''}
     ${renderPrintProfile()}
     <section class="printer-section"><div class="section-head"><div><p class="eyebrow">Thiết bị local</p><h2>USB và CUPS</h2><p class="subtle">Chọn queue/device URI do CUPS trả về. Không dùng đường dẫn /dev.</p></div><button class="secondary" id="scan">Quét máy in USB</button></div><div class="card cups-panel">${renderScan()}</div><div class="section-head printer-section-head"><div><h2>Printer profiles</h2><p class="subtle">Cấu hình được lưu local và giữ nguyên sau reboot.</p></div></div>${renderPrinters()}${editing ? renderEditor(editing) : ''}</section>
