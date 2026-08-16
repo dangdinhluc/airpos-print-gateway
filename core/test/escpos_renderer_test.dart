@@ -206,7 +206,7 @@ void main() {
         },
         printProfile: _profile(receiptTemplate: 'detailed'),
       );
-      expect(text, contains('1 x ¥430'));
+      expect(text, contains('                         1 x ¥430'));
     },
   );
 
