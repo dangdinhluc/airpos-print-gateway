@@ -24,12 +24,12 @@ class StarCommandEncoder {
     outputPath,
   ];
 
-  Future<List<int>> encode(PrinterProfile profile, List<int> png) async {
+  Future<List<int>> encode(PrinterProfile profile, String markup) async {
     final directory = await Directory.systemTemp.createTemp('airpos-star-');
-    final input = File('${directory.path}/receipt.png');
+    final input = File('${directory.path}/receipt.stm');
     final output = File('${directory.path}/receipt.starprnt');
     try {
-      await input.writeAsBytes(png, flush: true);
+      await input.writeAsString(markup, flush: true);
       final result = await Process.run(
         executable,
         arguments(profile, input.path, output.path),
