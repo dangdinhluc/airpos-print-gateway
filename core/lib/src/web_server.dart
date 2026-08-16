@@ -160,10 +160,6 @@ class GatewayWebServer {
       await _putPrintProfile(request);
       return;
     }
-    if (request.method == 'POST' && path == '/api/print-profile/sync') {
-      await _syncPrintProfile(request);
-      return;
-    }
     if (request.method == 'POST' && path == '/api/print-profile/preview') {
       await _previewPrintProfile(request);
       return;
@@ -317,21 +313,8 @@ class GatewayWebServer {
         appVersion: settings.appVersion,
       ),
     );
-    await store.savePrintProfile(StorePrintProfile(), markLocalEdited: false);
-    final seedClient = _client(
-      tenantId: tenant.tenantId,
-      gatewayId: provision.gatewayId,
-      gatewayToken: provision.gatewayToken,
-    );
-    try {
-      await store.importPrintProfileSeed(
-        await seedClient.fetchStorePrintSeed(),
-      );
-    } catch (_) {
-      await store.savePrintProfile(StorePrintProfile(), markLocalEdited: false);
-    } finally {
-      seedClient.close();
-    }
+    // ponytail: templates are gateway-local; never import or overwrite them
+    // from the server. A later optional import must be an explicit new feature.
     _sessions.remove(sessionId);
     onConfigurationChanged();
   }
@@ -350,52 +333,6 @@ class GatewayWebServer {
     final current = await store.loadPrintProfile();
     final next = _validatedPrintProfile(await _readBody(request), current);
     await store.savePrintProfile(next);
-    onConfigurationChanged();
-    final saved = await store.loadPrintProfile();
-    await _json(request, HttpStatus.ok, <String, Object?>{
-      'ok': true,
-      'profile': _printProfileJson(saved),
-      'sync': _printProfileSyncJson(saved),
-      'font_warning': _printerService.fontWarning,
-    });
-  }
-
-  Future<void> _syncPrintProfile(HttpRequest request) async {
-    final body = await _readBody(request);
-    final replaceLocal = body['replace_local'];
-    if (replaceLocal is! bool) {
-      throw const _WebException(
-        HttpStatus.badRequest,
-        'REPLACE_LOCAL_INVALID',
-        'replace_local phải là true hoặc false.',
-      );
-    }
-    final current = await store.loadPrintProfile();
-    if (current.localEditedAt != null && !replaceLocal) {
-      throw const _WebException(
-        HttpStatus.conflict,
-        'LOCAL_EDITS_EXIST',
-        'Cấu hình in trên máy đã được sửa. Chọn ghi đè nếu muốn đồng bộ lại.',
-      );
-    }
-    final config = await store.loadConfig();
-    if (config == null || !config.isProvisioned) {
-      throw const _WebException(
-        HttpStatus.badRequest,
-        'GATEWAY_NOT_PROVISIONED',
-        'Gateway chưa được đăng ký với quán.',
-      );
-    }
-    final client = _client(
-      tenantId: config.tenantId,
-      gatewayId: config.gatewayId,
-      gatewayToken: config.gatewayToken,
-    );
-    try {
-      await store.importPrintProfileSeed(await client.fetchStorePrintSeed());
-    } finally {
-      client.close();
-    }
     onConfigurationChanged();
     final saved = await store.loadPrintProfile();
     await _json(request, HttpStatus.ok, <String, Object?>{

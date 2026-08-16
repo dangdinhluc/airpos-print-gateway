@@ -137,7 +137,7 @@ void main() {
       expect(response.body, isNot(contains('gateway-token')));
       expect(config?.tenantId, 'tenant-1');
       expect(config?.gatewayId, 'gateway-1');
-      expect((await store.loadPrintProfile()).storeName, 'Seed Store');
+      expect((await store.loadPrintProfile()).storeName, isEmpty);
     },
   );
 
@@ -276,7 +276,7 @@ void main() {
     expect((await store.loadPrintProfile()).storeName, 'Still Here');
   });
 
-  test('print profile sync detects local edits and force-syncs seed', () async {
+  test('print profile is never downloaded from the server', () async {
     final directory = await Directory.systemTemp.createTemp('airpos-sync-');
     final webRoot = await Directory('${directory.path}/web').create();
     await File('${webRoot.path}/index.html').writeAsString('gateway-ui');
@@ -327,15 +327,12 @@ void main() {
     );
     final saved = await store.loadPrintProfile();
 
-    expect(conflict.statusCode, HttpStatus.conflict);
-    expect(conflict.body, contains('LOCAL_EDITS_EXIST'));
-    expect(forced.statusCode, HttpStatus.ok);
-    expect(fake.seedCalls, 1);
-    expect(saved.storeName, 'Seed Store');
-    expect(saved.templateSettings.receiptTemplate, 'compact');
-    expect(saved.lastSyncedAt, isNotNull);
-    expect(saved.localEditedAt, isNull);
-    expect(wakeCount, 1);
+    expect(conflict.statusCode, HttpStatus.notFound);
+    expect(forced.statusCode, HttpStatus.notFound);
+    expect(fake.seedCalls, 0);
+    expect(saved.storeName, 'Local Edit');
+    expect(saved.localEditedAt, isNotNull);
+    expect(wakeCount, 0);
   });
 
   test(
@@ -391,8 +388,7 @@ void main() {
       expect(response.body, contains('"state":"provisioned"'));
       expect(response.body, isNot(contains('gateway-token')));
       expect(response.body, isNot(contains('supabase')));
-      expect(saved.storeName, StorePrintProfile().storeName);
-      expect(saved.storeName, isNot('Previous Tenant'));
+      expect(saved.storeName, 'Previous Tenant');
       expect(saved.lastSyncedAt, isNull);
     },
   );
