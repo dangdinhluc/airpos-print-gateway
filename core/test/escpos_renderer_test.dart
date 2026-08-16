@@ -195,6 +195,17 @@ void main() {
     );
   });
 
+  test(
+    'detailed receipt keeps item name and quantity-price-total together',
+    () {
+      final text = renderer.renderPreviewText(
+        payload: _receiptPayload(),
+        printProfile: _profile(receiptTemplate: 'detailed'),
+      );
+      expect(text, contains('Pho\nSL / 数量: 2                    ¥1,200'));
+    },
+  );
+
   test('receipt amount column separates text from yen value', () {
     expect(splitReceiptAmountColumn('小計                         ¥1,480'), (
       '小計',

@@ -729,12 +729,12 @@ class AndroidPrintTemplate {
       if (model.storeTaxId.isNotEmpty)
         '${label('登録番号', 'MST')}: ${model.storeTaxId}',
     ];
-    for (final line in storeLines) {
+    if (storeLines.isNotEmpty) {
       lines.addAll(
-        _wrapText(
-          line,
-          model.width,
-        ).map((value) => '$androidSansMarker$androidCenterMarker$value'),
+        _wrapText(storeLines.join('  ·  '), model.width).map(
+          (value) =>
+              '$androidSansMarker$androidSmallMarker$androidCenterMarker$value',
+        ),
       );
     }
     _appendShortRule(lines);
@@ -781,11 +781,11 @@ class AndroidPrintTemplate {
       final quantity = _formatQuantity(quantityValue);
       final unitPrice = _receiptItemUnitPrice(item, model.currency);
       final amount = _receiptItemAmount(item, quantityValue, model.currency);
-      lines.addAll(_keyValueLines(name, amount, model.width));
+      lines.addAll(_wrapText(name, model.width));
       final detail = unitPrice.isNotEmpty
           ? '$quantity x $unitPrice'
           : '${_receiptLabel('qty', model.languages)}: $quantity';
-      lines.addAll(_wrapText('    $detail', model.width));
+      lines.addAll(_keyValueLines('  $detail', amount, model.width));
       _appendReceiptItemOptions(lines, item, model, indent: '    ');
       _appendItemNotes(lines, item, model, indent: '    ');
     }
