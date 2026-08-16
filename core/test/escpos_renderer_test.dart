@@ -194,6 +194,47 @@ void main() {
     );
   });
 
+  test(
+    'Wabi Japanese receipt preview keeps receipt fields and aligned totals',
+    () {
+      final text = renderer.renderPreviewText(
+        payload: <String, dynamic>{
+          'order_number': '20260815-F5F183',
+          'table_label': 'B1',
+          'created_at': '2026/08/15 22:56',
+          'store_settings': <String, Object?>{
+            'store_name': 'ワビ酒場高松',
+            'address': '香川県高松市瓦町',
+            'phone': '087-800-8150',
+            'currency': 'JPY',
+          },
+          'items': <Map<String, Object?>>[
+            <String, Object?>{
+              'quantity': 1,
+              'name': 'Ikan Gulai',
+              'line_total': 1480,
+            },
+            <String, Object?>{
+              'quantity': 1,
+              'name': 'Bolu Pisang',
+              'line_total': 430,
+            },
+          ],
+          'subtotal': 1910,
+          'tax': 174,
+          'total': 1910,
+        },
+        printProfile: _profile(receiptTemplate: 'detailed'),
+      );
+
+      expect(text, contains('ワビ酒場高松'));
+      expect(text, contains('香川県高松市瓦町'));
+      expect(text, contains('087-800-8150'));
+      expect(text, contains('Ikan Gulai'));
+      expect(text, contains('¥1,910'));
+    },
+  );
+
   group('unicode font fallback', () {
     test('empty archive path keeps ASCII fallback warning', () async {
       const fallbackRenderer = GatewayPrintRenderer(unicodeFontArchivePath: '');
