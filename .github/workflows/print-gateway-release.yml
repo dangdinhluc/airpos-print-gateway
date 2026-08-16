@@ -98,6 +98,7 @@ jobs:
           dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F 'airpos-print-gateway.service'
           dpkg-deb --fsys-tarfile dist/airpos-print-gateway_amd64.deb | tar -xOf - ./opt/airpos-print-gateway/fonts/airpos-unicode.fnt.zip > "$font_zip"
           python3 packaging/generate_bitmap_font.py --output "$font_zip" --validate-only
+          python3 packaging/validate_print_font.py "$font_zip"
           file build/airpos_print_gatewayd | grep -E 'ELF 64-bit.*x86-64'
           grep -aF -- "$AIRPOS_SUPABASE_URL" build/airpos_print_gatewayd >/dev/null
           grep -aF -- "$AIRPOS_SUPABASE_ANON_KEY" build/airpos_print_gatewayd >/dev/null
