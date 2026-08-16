@@ -7,7 +7,6 @@ import 'android_template.dart';
 import 'models.dart';
 import 'print_profile.dart';
 import 'star_command.dart';
-import 'star_markup.dart';
 
 const String defaultUnicodeFontArchivePath =
     '/opt/airpos-print-gateway/fonts/airpos-unicode.fnt.zip';
@@ -222,6 +221,16 @@ class GatewayPrintRenderer {
     TestPrintAction? action,
     String? qrData,
   }) async {
+    final loadedFont = await _loadFont();
+    final printable = loadedFont.font == null ? _ascii(text) : text;
+    final bitmap = _binarize(
+      _renderBitmap(
+        printable,
+        profile.paperWidthMm == 58 ? 384 : 576,
+        font: loadedFont.font ?? image.arial14,
+        qrData: qrData,
+      ),
+    );
     final forceCut = action == TestPrintAction.cut;
     final forceBeep = action == TestPrintAction.beep;
     final openDrawer = action == TestPrintAction.cashDrawer;
@@ -233,21 +242,11 @@ class GatewayPrintRenderer {
       return RenderedDocument(
         bytes: await const StarCommandEncoder().encode(
           starProfile,
-          StarMarkup.receipt(text),
+          image.encodePng(bitmap),
         ),
         raw: true,
       );
     }
-    final loadedFont = await _loadFont();
-    final printable = loadedFont.font == null ? _ascii(text) : text;
-    final bitmap = _binarize(
-      _renderBitmap(
-        printable,
-        profile.paperWidthMm == 58 ? 384 : 576,
-        font: loadedFont.font ?? image.arial14,
-        qrData: qrData,
-      ),
-    );
     return RenderedDocument(
       bytes: _toEscPosRaster(
         bitmap,
