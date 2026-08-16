@@ -1964,6 +1964,17 @@ class _RasterLine {
   final bool rule;
 }
 
+/// Splits rendered receipt rows so currency never depends on proportional spaces.
+/// ponytail: handles the JPY formats emitted by this gateway; extend for other
+/// currencies when their receipt formatter is added.
+(String, String)? splitReceiptAmountColumn(String content) {
+  final match = RegExp(r'^(.*?)\s+(¥[0-9][0-9,]*)\s*$').firstMatch(content);
+  if (match == null) return null;
+  final left = match.group(1)?.trimRight() ?? '';
+  final right = match.group(2) ?? '';
+  return left.isEmpty ? null : (left, right);
+}
+
 image.Image renderAndroidTemplateBitmap(
   String text,
   int width, {
@@ -2014,6 +2025,50 @@ image.Image renderAndroidTemplateBitmap(
     final scale = math.min(styleScale, (width - 16) / nativeWidth);
     final layerWidth = math.max(1, (nativeWidth * scale).round() + 4);
     final layerHeight = math.max(4, (baseLineHeight * scale).round() + 4);
+    final amountColumn = !style.invert
+        ? splitReceiptAmountColumn(content)
+        : null;
+    if (amountColumn != null) {
+      final row = image.Image(
+        width: width - 16,
+        height: layerHeight,
+        numChannels: 4,
+      );
+      image.fill(row, color: image.ColorRgba8(0, 0, 0, 0));
+      for (final part in <(String, bool)>[
+        (amountColumn.$1, false),
+        (amountColumn.$2, true),
+      ]) {
+        final partWidth = math.max(1, _fontPixelWidth(font, part.$1));
+        final glyph = image.Image(
+          width: partWidth + 4,
+          height: baseLineHeight + 4,
+          numChannels: 4,
+        );
+        image.fill(glyph, color: image.ColorRgba8(0, 0, 0, 0));
+        image.drawString(
+          glyph,
+          part.$1,
+          font: font,
+          x: 2,
+          y: 2,
+          color: image.ColorRgb8(0, 0, 0),
+        );
+        final rendered = image.copyResize(
+          glyph,
+          width: math.max(1, (partWidth * scale).round() + 4),
+          height: layerHeight,
+          interpolation: image.Interpolation.nearest,
+        );
+        image.compositeImage(
+          row,
+          rendered,
+          dstX: part.$2 ? row.width - rendered.width : 0,
+        );
+      }
+      rows.add(_RasterLine(row, false, false));
+      continue;
+    }
     final layer = image.Image(
       width: nativeWidth + 4,
       height: baseLineHeight + 4,

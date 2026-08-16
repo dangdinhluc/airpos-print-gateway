@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:airpos_print_gateway_core/src/android_template.dart';
 import 'package:airpos_print_gateway_core/src/escpos.dart';
 import 'package:airpos_print_gateway_core/src/models.dart';
 import 'package:airpos_print_gateway_core/src/print_profile.dart';
@@ -192,6 +193,18 @@ void main() {
       renderer.renderSamplePreviewText(jobType: 'kitchen_ticket'),
       renderer.renderPreviewText(jobType: 'kitchen_ticket'),
     );
+  });
+
+  test('receipt amount column separates text from yen value', () {
+    expect(splitReceiptAmountColumn('小計                         ¥1,480'), (
+      '小計',
+      '¥1,480',
+    ));
+    expect(splitReceiptAmountColumn('消費税(10%)                    ¥135'), (
+      '消費税(10%)',
+      '¥135',
+    ));
+    expect(splitReceiptAmountColumn('¥1,480'), isNull);
   });
 
   test(
