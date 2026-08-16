@@ -41,7 +41,7 @@ class StarCommandEncoder {
           'StarPRNT converter failed: ${result.stderr}'.trim(),
         );
       }
-      return output.readAsBytes();
+      return await output.readAsBytes();
     } on ProcessException catch (_) {
       throw const CupsException(
         PrinterHealthStatus.driverMissing,
