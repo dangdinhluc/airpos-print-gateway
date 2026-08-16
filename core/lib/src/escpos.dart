@@ -6,6 +6,7 @@ import 'package:image/image.dart' as image;
 import 'android_template.dart';
 import 'models.dart';
 import 'print_profile.dart';
+import 'star_command.dart';
 
 const String defaultUnicodeFontArchivePath =
     '/opt/airpos-print-gateway/fonts/airpos-unicode.fnt.zip';
@@ -234,15 +235,16 @@ class GatewayPrintRenderer {
     final forceBeep = action == TestPrintAction.beep;
     final openDrawer = action == TestPrintAction.cashDrawer;
     if (profile.protocol == PrinterProtocol.starCups) {
+      final starProfile = profile.copyWith(
+        cut: forceCut || profile.cut,
+        cashDrawer: openDrawer || profile.cashDrawer,
+      );
       return RenderedDocument(
-        bytes: image.encodePng(bitmap),
-        raw: false,
-        cupsOptions: _starOptions(
-          profile,
-          bitmapHeight: bitmap.height,
-          cut: forceCut || profile.cut,
-          cashDrawer: openDrawer || profile.cashDrawer,
+        bytes: await const StarCommandEncoder().encode(
+          starProfile,
+          image.encodePng(bitmap),
         ),
+        raw: true,
       );
     }
     return RenderedDocument(
@@ -353,22 +355,6 @@ class GatewayPrintRenderer {
       if (cashDrawer) ...<int>[0x1B, 0x70, 0x00, 0x32, 0x32],
       if (cut) ...<int>[0x1D, 0x56, 0x42, 0x00],
     ];
-  }
-
-  Map<String, String> _starOptions(
-    PrinterProfile profile, {
-    required int bitmapHeight,
-    required bool cut,
-    required bool cashDrawer,
-  }) {
-    return <String, String>{
-      'orientation-requested': '3',
-      'media':
-          'Custom.${profile.paperWidthMm == 58 ? 48 : 72}x${(bitmapHeight * 25.4 / 203).ceil()}mm',
-      if (cut && profile.effectiveCapabilities.cut) 'PageCutType': 'PartialCut',
-      if (cashDrawer && profile.effectiveCapabilities.cashDrawer)
-        'CashDrawer': 'OpenDrawer1',
-    };
   }
 
   String _qrText(String title, String url) =>

@@ -30,6 +30,19 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      - name: Set up .NET for official Star converter
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build official StarPRNT converter
+        run: |
+          git clone --depth 1 --branch v2.0.1 https://github.com/star-micronics/cloudprnt-sdk.git /tmp/star-cloudprnt-sdk
+          dotnet publish /tmp/star-cloudprnt-sdk/CloudPRNTSDKSamples/cputil/cputil.csproj \
+            --configuration Release --runtime linux-x64 --self-contained true \
+            -p:PublishSingleFile=true --output /tmp/star-cputil
+          test -x /tmp/star-cputil/cputil
+
       - name: Install package build dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends fonts-noto-cjk fontconfig python3-pil shellcheck
 
@@ -67,7 +80,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           version="${VERSION#print-gateway-v}"
-          ./packaging/build-deb.sh "$version" --font "$AIRPOS_BITMAP_FONT"
+          ./packaging/build-deb.sh "$version" --font "$AIRPOS_BITMAP_FONT" --star-cputil /tmp/star-cputil/cputil
           cp "dist/airpos-print-gateway_${version}_amd64.deb" dist/airpos-print-gateway_amd64.deb
           (cd dist && sha256sum airpos-print-gateway_amd64.deb > SHA256SUMS)
 
@@ -80,6 +93,7 @@ jobs:
           dpkg-deb --contents dist/airpos-print-gateway_amd64.deb
           dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F '/opt/airpos-print-gateway/airpos_print_gatewayd'
           dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F '/opt/airpos-print-gateway/web/index.html'
+          dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F '/opt/airpos-print-gateway/bin/cputil'
           dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F '/opt/airpos-print-gateway/fonts/airpos-unicode.fnt.zip'
           dpkg-deb --contents dist/airpos-print-gateway_amd64.deb | grep -F 'airpos-print-gateway.service'
           dpkg-deb --fsys-tarfile dist/airpos-print-gateway_amd64.deb | tar -xOf - ./opt/airpos-print-gateway/fonts/airpos-unicode.fnt.zip > "$font_zip"
