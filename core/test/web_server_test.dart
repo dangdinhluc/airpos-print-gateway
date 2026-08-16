@@ -50,6 +50,46 @@ void main() {
     },
   );
 
+  test('deletes printer profiles whose IDs contain encoded slashes', () async {
+    final directory = await Directory.systemTemp.createTemp('airpos-delete-');
+    final webRoot = await Directory('${directory.path}/web').create();
+    await File('${webRoot.path}/index.html').writeAsString('gateway-ui');
+    addTearDown(() => directory.delete(recursive: true));
+    const printerId = 'usb://Star/mC-Print3';
+    final store = GatewayConfigStore(configDirectory: directory.path);
+    await store.savePrinters(<PrinterProfile>[
+      const PrinterProfile(
+        id: printerId,
+        name: 'Receipt Printer',
+        connectionType: ConnectionType.usb,
+        protocol: PrinterProtocol.escpos,
+        cupsQueue: 'Receipt',
+        cupsDeviceUri: printerId,
+      ),
+    ]);
+    final server = GatewayWebServer(
+      settings: const GatewayRuntimeSettings(
+        supabaseUrl: 'https://control.example.test',
+        supabaseAnonKey: 'compiled-anon-key',
+        webPort: 0,
+      ),
+      store: store,
+      webRoot: webRoot,
+      snapshot: () => const GatewayRuntimeSnapshot(state: 'online'),
+      onConfigurationChanged: () {},
+    );
+    await server.start();
+    addTearDown(server.stop);
+
+    final response = await _delete(
+      server.boundPort,
+      '/api/printers/${Uri.encodeComponent(printerId)}',
+    );
+
+    expect(response.statusCode, HttpStatus.ok);
+    expect(await store.loadPrinters(), isEmpty);
+  });
+
   test(
     'login auto-provisions one tenant and keeps credentials out of response',
     () async {
@@ -391,15 +431,16 @@ void main() {
     final response = await _post(
       server.boundPort,
       '/api/print-profile/preview',
-      <String, Object?>{'type': 'kitchen'},
+      <String, Object?>{'type': 'kitchen', 'paper_width_mm': 58},
     );
     final decoded = jsonDecode(response.body) as Map<String, dynamic>;
 
     expect(response.statusCode, HttpStatus.ok);
     expect(decoded['type'], 'kitchen');
     expect(decoded['template'], 'checklist');
-    expect(decoded['paper_width_mm'], 80);
-    expect(decoded['text'], contains('KITCHEN CHECKLIST'));
+    expect(decoded['paper_width_mm'], 58);
+    expect(decoded['text'], contains('CHECKLIST'));
+    expect(decoded['text'], contains('[ ]'));
     expect(printerService.previewCalls, 1);
     expect(printerService.connectionChecks, 0);
   });
@@ -468,6 +509,20 @@ Future<_Response> _get(int port, String path) async {
   final client = HttpClient();
   try {
     final request = await client.get('127.0.0.1', port, path);
+    final response = await request.close();
+    return _Response(
+      response.statusCode,
+      await utf8.decoder.bind(response).join(),
+    );
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<_Response> _delete(int port, String path) async {
+  final client = HttpClient();
+  try {
+    final request = await client.delete('127.0.0.1', port, path);
     final response = await request.close();
     return _Response(
       response.statusCode,
@@ -615,9 +670,17 @@ class _RecordingPrinterService extends GatewayPrinterService {
   }
 
   @override
-  String previewText({required String type, StorePrintProfile? printProfile}) {
+  String previewText({
+    required String type,
+    StorePrintProfile? printProfile,
+    int paperWidthMm = 80,
+  }) {
     previewCalls++;
-    return super.previewText(type: type, printProfile: printProfile);
+    return super.previewText(
+      type: type,
+      printProfile: printProfile,
+      paperWidthMm: paperWidthMm,
+    );
   }
 
   @override

@@ -128,7 +128,7 @@ class GatewayWebServer {
 
   Future<void> _handleApi(HttpRequest request) async {
     final path = request.uri.path;
-    final parts = path.split('/').where((part) => part.isNotEmpty).toList();
+    final parts = request.uri.pathSegments;
 
     if (request.method == 'GET' && path == '/api/status') {
       await _json(request, HttpStatus.ok, await _status());
@@ -417,6 +417,7 @@ class GatewayWebServer {
       );
     }
     final profile = await store.loadPrintProfile();
+    final paperWidthMm = body['paper_width_mm'] == 58 ? 58 : 80;
     final template = type == 'kitchen'
         ? profile.templateSettings.kitchenTemplate
         : profile.templateSettings.receiptTemplate;
@@ -424,8 +425,12 @@ class GatewayWebServer {
       'ok': true,
       'type': type,
       'template': template,
-      'paper_width_mm': 80,
-      'text': _printerService.previewText(type: type, printProfile: profile),
+      'paper_width_mm': paperWidthMm,
+      'text': _printerService.previewText(
+        type: type,
+        printProfile: profile,
+        paperWidthMm: paperWidthMm,
+      ),
     });
   }
 

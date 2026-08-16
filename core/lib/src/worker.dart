@@ -49,10 +49,15 @@ class GatewayPrinterService {
     await _send(effective, document);
   }
 
-  String previewText({required String type, StorePrintProfile? printProfile}) {
+  String previewText({
+    required String type,
+    StorePrintProfile? printProfile,
+    int paperWidthMm = 80,
+  }) {
     return _renderer.renderSamplePreviewText(
       jobType: type == 'kitchen' ? 'kitchen_ticket' : 'receipt',
       printProfile: printProfile,
+      paperWidthMm: paperWidthMm,
     );
   }
 
@@ -92,13 +97,16 @@ class GatewayPrinterService {
   }
 
   Future<void> _send(PrinterProfile profile, RenderedDocument document) async {
+    final pages = document.printablePages.toList(growable: false);
     if (profile.usesCups) {
-      await _cups.print(
-        profile,
-        document.bytes,
-        options: document.cupsOptions,
-        raw: document.raw,
-      );
+      for (final page in pages) {
+        await _cups.print(
+          profile,
+          page.bytes,
+          options: page.cupsOptions,
+          raw: page.raw,
+        );
+      }
       return;
     }
     final host = profile.host?.trim() ?? '';
@@ -115,7 +123,9 @@ class GatewayPrinterService {
         profile.port,
         timeout: const Duration(seconds: 5),
       );
-      socket.add(document.bytes);
+      for (final page in pages) {
+        socket.add(page.bytes);
+      }
       await socket.flush();
     } finally {
       await socket?.close();

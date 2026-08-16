@@ -9,7 +9,7 @@ void main() {
   const renderer = GatewayPrintRenderer(unicodeFontArchivePath: '');
 
   group('receipt preview presets', () {
-    test('modern preset uses store header and standard receipt title', () {
+    test('modern preset follows Android detailed baseline', () {
       final text = renderer.renderPreviewText(
         payload: _receiptPayload(),
         printProfile: _profile(
@@ -20,9 +20,10 @@ void main() {
       );
 
       expect(text, contains('Payload Store'));
-      expect(text, contains('RECEIPT'));
-      expect(text, isNot(contains('DETAILED RECEIPT')));
-      expect(text, contains('Xin chao'));
+      expect(text, contains('\u0002\u0003\u0006Payload Store'));
+      expect(text, contains('Món / 商品'));
+      expect(text, contains('10%対象'));
+      expect(text, isNot(contains('Xin chao')));
       expect(text, contains('Arigato'));
     });
 
@@ -32,9 +33,9 @@ void main() {
         printProfile: _profile(receiptTemplate: 'classic'),
       );
 
-      expect(text, contains('*** RECEIPT ***'));
-      expect(text, contains('Payload Store'));
-      expect(text, isNot(contains('DETAILED RECEIPT')));
+      expect(text, contains('\u0001Payload Store'));
+      expect(text, contains('RECEIPT'));
+      expect(text, contains('Món / 商品'));
     });
 
     test(
@@ -45,10 +46,11 @@ void main() {
           printProfile: _profile(receiptTemplate: 'compact'),
         );
 
-        expect(text, contains('RECEIPT #A-100'));
+        expect(text, contains('\u0001Payload Store'));
+        expect(text, contains('#A-100'));
         expect(text, isNot(contains('Order: #A-100')));
         expect(text, isNot(contains('Cashier: Mai')));
-        expect(text, contains('----------------'));
+        expect(text, contains('2 x Pho'));
       },
     );
 
@@ -58,10 +60,10 @@ void main() {
         printProfile: _profile(receiptTemplate: 'detailed'),
       );
 
-      expect(text, contains('DETAILED RECEIPT'));
+      expect(text, contains('\u0002\u0003\u0006Payload Store'));
       expect(text, contains('No onion'));
-      expect(text, contains('Payments:'));
-      expect(text, contains('cash: JPY 1200'));
+      expect(text, contains('現金 (Tiền mặt)'));
+      expect(text, contains('¥1,200'));
     });
   });
 
@@ -73,22 +75,21 @@ void main() {
         printProfile: _profile(kitchenTemplate: 'standard'),
       );
 
-      expect(text, contains('KITCHEN TICKET'));
-      expect(text, contains('Order: #A-100'));
+      expect(text, contains('\u0001B2'));
+      expect(text, contains('#A-100'));
       expect(text, contains('No onion'));
     });
 
-    test('compact preset trims note lines', () {
+    test('compact preset keeps the compact kitchen layout', () {
       final text = renderer.renderPreviewText(
         jobType: 'kitchen_ticket',
         payload: _kitchenPayload(),
         printProfile: _profile(kitchenTemplate: 'compact'),
       );
 
-      expect(text, contains('KITCHEN #A-100'));
-      expect(text, isNot(contains('Order: #A-100')));
-      expect(text, isNot(contains('No onion')));
-      expect(text, contains('----------------'));
+      expect(text, contains('\u0001B2  新規'));
+      expect(text, contains('Order'));
+      expect(text, contains('No onion'));
     });
 
     test('checklist preset uses checklist markers and cancellation title', () {
@@ -98,9 +99,9 @@ void main() {
         printProfile: _profile(kitchenTemplate: 'checklist'),
       );
 
-      expect(text, contains('CANCEL CHECKLIST'));
-      expect(text, contains('[ ] 2 x Pho'));
-      expect(text, contains('CANCEL: Customer changed mind'));
+      expect(text, contains('CANCEL'));
+      expect(text, contains('[X] HUY 2 Pho'));
+      expect(text, contains('NOTE: Customer changed mind'));
     });
   });
 
@@ -132,10 +133,10 @@ void main() {
       expect(text, contains('ペイロード店'));
       expect(text, contains('1-2-3 Shibuya'));
       expect(text, contains('03-1111-2222'));
-      expect(text, contains('Header VI'));
       expect(text, contains('Footer JA'));
-      expect(text, contains('Seated: 42 min'));
-      expect(text, contains('QR: https://example.test/review'));
+      expect(text, contains('[ QR menu / QRメニュー ]'));
+      expect(text, isNot(contains('Header VI')));
+      expect(text, isNot(contains('42 phút')));
       expect(text, isNot(contains('Order: #A-100')));
       expect(text, isNot(contains('Table: B2')));
       expect(text, isNot(contains('Date: 2026-08-15 12:00')));
@@ -173,13 +174,13 @@ void main() {
     );
 
     expect(text, contains('Snapshot Store'));
-    expect(text, contains('Order: #N-77'));
-    expect(text, contains('Table: C9'));
-    expect(text, contains('Cashier: Nested Staff'));
-    expect(text, contains('3 x Tea  USD 9'));
+    expect(text, contains('No. N-77'));
+    expect(text, contains('担当: Nested Staff'));
+    expect(text, contains('Tea'));
     expect(text, contains('Less ice'));
-    expect(text, contains('TOTAL: USD 9'));
-    expect(text, contains('QR: https://example.test/nested'));
+    expect(text, contains('9.00 USD'));
+    expect(text, contains('[ QR menu / QRメニュー ]'));
+    expect(text, isNot(contains('https://example.test/nested')));
   });
 
   test('render sample preview text is deterministic without payload', () {
@@ -294,7 +295,7 @@ void main() {
   });
 
   test(
-    'receipt render keeps qr raster plus cut and cash drawer commands',
+    'receipt uses Android QR marker while table QR keeps raster payload',
     () async {
       final withQr = await renderer.renderJob(
         const GatewayJob(
@@ -351,6 +352,21 @@ void main() {
         ),
         _usbProfile(),
       );
+      final tableQr = await renderer.renderJob(
+        const GatewayJob(
+          id: 'table-qr',
+          jobType: 'table_qr',
+          payload: <String, dynamic>{
+            'table_label': 'B2',
+            'qr_url': 'https://example.test/table/B2',
+          },
+        ),
+        _usbProfile(),
+      );
+      final withQrText = renderer.renderPreviewText(
+        payload: _receiptPayload(),
+        printProfile: _profile(showQrCode: true),
+      );
 
       expect(withQr.raw, isTrue);
       expect(withQr.bytes, containsAllInOrder(<int>[0x1B, 0x40, 0x1B, 0x61]));
@@ -359,7 +375,10 @@ void main() {
         containsAllInOrder(<int>[0x1B, 0x70, 0x00, 0x32, 0x32]),
       );
       expect(withQr.bytes, containsAllInOrder(<int>[0x1D, 0x56, 0x42, 0x00]));
-      expect(withQr.bytes.length, greaterThan(withoutQr.bytes.length));
+      expect(withQrText, contains('[ QR menu / QRメニュー ]'));
+      expect(withQrText, isNot(contains('https://example.test/review')));
+      expect(withoutQr.bytes.length, greaterThan(100));
+      expect(tableQr.bytes.length, greaterThan(1000));
 
       expect(cashDrawer.raw, isTrue);
       expect(
@@ -368,6 +387,64 @@ void main() {
       );
     },
   );
+
+  test('kitchen ticket splits one item per page like Android', () async {
+    final document = await renderer.renderJob(
+      const GatewayJob(
+        id: 'kitchen-pages',
+        jobType: 'kitchen_ticket',
+        payload: <String, dynamic>{
+          'order_number': 'A-100',
+          'table_label': 'B2',
+          'items': <Map<String, Object?>>[
+            <String, Object?>{'quantity': 1, 'name': 'Pho'},
+            <String, Object?>{'quantity': 2, 'name': 'Tea'},
+          ],
+        },
+      ),
+      _usbProfile(),
+    );
+
+    expect(document.pages, hasLength(2));
+    expect(document.printablePages, hasLength(2));
+  });
+
+  test('uses Android 58mm and 80mm raster widths', () async {
+    final wide = await renderer.renderJob(
+      GatewayJob(
+        id: 'wide',
+        jobType: 'receipt',
+        payload: renderer.samplePayload(jobType: 'receipt'),
+      ),
+      _usbProfile(),
+    );
+    final narrow = await renderer.renderJob(
+      GatewayJob(
+        id: 'narrow',
+        jobType: 'receipt',
+        payload: renderer.samplePayload(jobType: 'receipt'),
+      ),
+      _usbProfile().copyWith(paperWidthMm: 58),
+    );
+
+    expect(wide.bytes[9], 72); // 576 dots / 8
+    expect(narrow.bytes[9], 48); // 384 dots / 8
+  });
+
+  test('Star CUPS output carries portrait custom paper geometry', () async {
+    final document = await renderer.renderJob(
+      GatewayJob(
+        id: 'star',
+        jobType: 'receipt',
+        payload: renderer.samplePayload(jobType: 'receipt'),
+      ),
+      _usbProfile().copyWith(protocol: PrinterProtocol.starCups),
+    );
+
+    expect(document.raw, isFalse);
+    expect(document.cupsOptions['orientation-requested'], '3');
+    expect(document.cupsOptions['media'], startsWith('Custom.80x'));
+  });
 }
 
 Map<String, dynamic> _receiptPayload({int timeSeatedMinutes = 0}) {
