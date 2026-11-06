@@ -70,6 +70,9 @@ let printers: Printer[] = [];
 let scan: CupsScan | null = null;
 let tenants: Tenant[] = [];
 let editing: Printer | null = null;
+let printerSetupStep = 0;
+let setupTestPassed = false;
+let setupScanAttempted = false;
 let printProfile: PrintProfileResponse | null = null;
 let preview: PreviewResponse | null = null;
 let busy = false;
@@ -188,11 +191,11 @@ async function loadDashboard(): Promise<void> {
 function renderDashboard(): void {
   const worker = gatewayStatus?.worker ?? { state: 'starting' };
   app.innerHTML = `<div class="shell"><header class="topbar"><div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>AirPOS Print Gateway</span></div><div class="top-actions"><span class="subtle">Chỉ truy cập trên máy này</span><button class="ghost" id="logout">Đăng xuất</button></div></header><div class="container">
-    <div class="dashboard-head"><div><p class="eyebrow">Gateway Ubuntu</p><h1>Quản lý máy in</h1><p class="muted">Worker chạy nền kể cả khi anh đóng trình duyệt.</p></div><div class="actions"><button class="secondary" id="refresh">Làm mới</button><button class="primary" id="new-printer">Thêm máy in</button></div></div>
-    <div class="status-grid"><div class="card metric"><span class="metric-label">Worker</span><div class="metric-value"><span class="dot ${dotClass(worker.state)}"></span>${esc(worker.state === 'online' ? 'Đang chạy' : worker.state === 'not_configured' ? 'Chưa cấu hình' : 'Cần kiểm tra')}</div></div><div class="card metric"><span class="metric-label">CUPS</span><div class="metric-value"><span class="dot ${scan ? 'ok' : 'warn'}"></span>${scan ? 'Đã quét' : 'Chưa quét'}</div></div><div class="card metric"><span class="metric-label">Job gần nhất</span><div class="metric-value">${esc(worker.last_job_count ?? 0)}</div></div><div class="card metric"><span class="metric-label">Gateway</span><div class="metric-value">Local</div></div></div>
+    <div class="dashboard-head"><div><p class="eyebrow">Gateway Ubuntu</p><h1>Máy in</h1><p class="muted">Thêm máy in, rồi in thử để kiểm tra kết nối.</p></div><div class="actions"><button class="secondary" id="refresh">Làm mới</button><button class="primary" id="new-printer">Thêm máy in</button></div></div>
+    <div class="status-grid"><div class="card metric"><span class="metric-label">Gateway</span><div class="metric-value"><span class="dot ${dotClass(worker.state)}"></span>${esc(worker.state === 'online' ? 'Đang chạy' : worker.state === 'not_configured' ? 'Chưa cấu hình' : 'Cần kiểm tra')}</div></div><div class="card metric"><span class="metric-label">Máy in</span><div class="metric-value">${printers.length}</div></div><div class="card metric"><span class="metric-label">Lệnh in gần đây</span><div class="metric-value">${esc(worker.last_job_count ?? 0)}</div></div></div>
     ${worker.last_error ? `<p class="error">${esc(worker.last_error)}</p>` : ''}
-    ${renderPrintProfile()}
-    <section class="printer-section"><div class="section-head"><div><p class="eyebrow">Thiết bị local</p><h2>USB và CUPS</h2><p class="subtle">Chọn queue/device URI do CUPS trả về. Không dùng đường dẫn /dev.</p></div><button class="secondary" id="scan">Quét máy in USB</button></div><div class="card cups-panel">${renderScan()}</div><div class="section-head printer-section-head"><div><h2>Printer profiles</h2><p class="subtle">Cấu hình được lưu local và giữ nguyên sau reboot.</p></div></div>${renderPrinters()}${editing ? renderEditor(editing) : ''}</section>
+    <section class="printer-section"><div class="section-head"><div><p class="eyebrow">Danh sách</p><h2>Máy in đã thêm</h2><p class="subtle">Cấu hình được lưu trên Gateway này.</p></div></div>${renderPrinters()}${editing ? renderEditor(editing) : ''}</section>
+    <details class="settings-disclosure"><summary>Cài đặt nâng cao</summary><div class="settings-content">${renderPrintProfile()}<section><div class="section-head"><div><h2>Dò CUPS</h2><p class="subtle">Dùng khi cần kiểm tra thiết bị hoặc cấu hình máy in thủ công.</p></div><button class="secondary" id="scan">Quét CUPS</button></div><div class="card cups-panel">${renderScan()}</div></section></div></details>
   </div></div>`;
   bindDashboardEvents();
 }
@@ -214,16 +217,44 @@ function renderScan(): string {
 }
 
 function renderPrinters(): string {
-  if (!printers.length) return '<div class="empty">Chưa có printer profile. Thêm máy in để worker biết nơi gửi receipt và kitchen.</div>';
+  if (!printers.length) return '<div class="empty empty-state"><strong>Chưa có máy in</strong><span>Thêm máy in để Gateway có thể nhận lệnh in từ quán.</span></div>';
   return `<div class="printer-grid">${printers.map((printer) => {
     const health = printer.health?.status ?? 'unavailable';
     const capabilities = printer.capabilities ?? { cut: false, beep: false, cash_drawer: false };
-    const location = printer.connection_type === 'network' ? `${printer.host ?? ''}:${printer.port}` : (printer.cups_queue || 'Chưa có queue');
-    return `<article class="card printer-card"><div class="printer-title"><div><h3>${esc(printer.name)}</h3><p class="subtle">${esc(printer.role)} · ${esc(printer.protocol)}</p></div><span class="health ${esc(health)}"><span class="dot ${dotClass(health)}"></span>${esc(friendlyStatus(health))}</span></div><div class="printer-meta"><div>Vị trí: <strong>${esc(location)}</strong></div><div>Khổ giấy: <strong>${esc(printer.paper_width_mm)}mm</strong> · ${printer.enabled ? 'Đang bật' : 'Đang tắt'}</div>${printer.health?.detail ? `<div>${esc(printer.health.detail)}</div>` : ''}${capabilities.warning ? `<div class="subtle">${esc(capabilities.warning)}</div>` : ''}</div><div class="test-actions"><button class="secondary mini" data-test="connection" data-id="${esc(printer.id)}">Kết nối</button><button class="secondary mini" data-test="receipt" data-id="${esc(printer.id)}">Receipt</button><button class="secondary mini" data-test="kitchen" data-id="${esc(printer.id)}">Kitchen</button><button class="secondary mini" data-test="cut" data-id="${esc(printer.id)}" ${capabilities.cut ? '' : 'disabled'}>Cut</button><button class="secondary mini" data-test="beep" data-id="${esc(printer.id)}" ${capabilities.beep ? '' : 'disabled'}>Beep</button><button class="secondary mini" data-test="cash_drawer" data-id="${esc(printer.id)}" ${capabilities.cash_drawer ? '' : 'disabled'}>Két tiền</button></div><div class="actions"><button class="secondary mini" data-edit="${esc(printer.id)}">Sửa</button><button class="danger mini" data-delete="${esc(printer.id)}">Xóa</button></div></article>`;
+    const location = printer.connection_type === 'network' ? (printer.host ? `${printer.host}:${printer.port}` : 'Mạng / CUPS') : printer.connection_type === 'bluetooth' ? 'Bluetooth' : 'USB';
+    const role = printer.role === 'kitchen' ? 'Phiếu bếp' : printer.role === 'qr' ? 'In mã QR' : printer.role === 'cash_drawer' ? 'Két tiền' : 'Hóa đơn';
+    const testAction = printer.role === 'kitchen' ? 'kitchen' : 'receipt';
+    return `<article class="card printer-card"><div class="printer-title"><div><h3>${esc(printer.name)}</h3><p class="subtle">${role} · ${esc(location)}</p></div><span class="health ${esc(health)}"><span class="dot ${dotClass(health)}"></span>${esc(friendlyStatus(health))}</span></div><div class="printer-meta"><div>Khổ giấy: <strong>${esc(printer.paper_width_mm)} mm</strong> · ${printer.enabled ? 'Đang bật' : 'Đang tắt'}</div>${printer.health?.detail ? `<div>${esc(printer.health.detail)}</div>` : ''}${capabilities.warning ? `<div class="subtle">${esc(capabilities.warning)}</div>` : ''}</div><div class="printer-primary-actions"><button class="primary" data-test="${testAction}" data-id="${esc(printer.id)}">In thử</button><button class="secondary" data-edit="${esc(printer.id)}">Chỉnh sửa</button></div><details class="printer-tools"><summary>Thao tác khác</summary><div class="test-actions"><button class="secondary mini" data-test="connection" data-id="${esc(printer.id)}">Kiểm tra kết nối</button><button class="secondary mini" data-test="receipt" data-id="${esc(printer.id)}">In thử hóa đơn</button><button class="secondary mini" data-test="kitchen" data-id="${esc(printer.id)}">In thử phiếu bếp</button>${capabilities.cut ? `<button class="secondary mini" data-test="cut" data-id="${esc(printer.id)}">Cắt giấy</button>` : ''}${capabilities.beep ? `<button class="secondary mini" data-test="beep" data-id="${esc(printer.id)}">Bíp</button>` : ''}${capabilities.cash_drawer ? `<button class="secondary mini" data-test="cash_drawer" data-id="${esc(printer.id)}">Mở két tiền</button>` : ''}<button class="danger mini" data-delete="${esc(printer.id)}">Xóa máy in</button></div></details></article>`;
   }).join('')}</div>`;
 }
 
+function renderPrinterSetupWizard(printer: Printer): string {
+  const devices = scan?.devices.filter((item) => /^(usb|bluetooth):/i.test(item.uri)) ?? [];
+  const selectedDevice = devices.find((item) => item.uri === printer.cups_device_uri);
+  const step = Math.min(printerSetupStep, 3);
+  const progress = `<ol class="setup-progress" aria-label="Các bước thiết lập"><li class="${step >= 1 ? (step === 1 ? 'is-current' : 'is-complete') : ''}" ${step === 1 ? 'aria-current="step"' : ''}>1. Chọn máy</li><li class="${step === 2 ? 'is-current' : step > 2 ? 'is-complete' : ''}" ${step === 2 ? 'aria-current="step"' : ''}>2. Thông tin</li><li class="${step === 3 ? 'is-current' : printerSetupStep > 3 ? 'is-complete' : ''}" ${step === 3 ? 'aria-current="step"' : ''}>3. In thử</li></ol>`;
+  const closeLabel = printer.id ? 'Đóng' : 'Hủy';
+
+  if (printerSetupStep === 1) {
+    const deviceOptions = devices.map((item) => `<option value="${esc(item.uri)}" ${item.uri === printer.cups_device_uri ? 'selected' : ''}>${esc(item.description || item.uri)}</option>`).join('');
+    const emptyMessage = scan ? 'Chưa tìm thấy máy in USB hoặc Bluetooth.' : setupScanAttempted ? 'Không đọc được danh sách thiết bị. Hãy thử quét lại.' : 'Đang tìm thiết bị máy in...';
+    return `<section class="card editor setup-wizard" id="printer-setup">${progress}<p class="eyebrow">Bước 1 / 3</p><h2>Chọn máy in</h2><p class="muted">Kết nối máy in USB hoặc Bluetooth với Gateway rồi chọn thiết bị tìm thấy.</p>${devices.length ? `<div class="field"><label for="setup-device">Thiết bị</label><select id="setup-device"><option value="">Chọn máy in</option>${deviceOptions}</select></div>` : `<div class="empty">${emptyMessage}</div>`}${scan && devices.length === 0 ? '<p class="subtle">Nếu anh dùng máy in mạng hoặc Star, chọn “Cấu hình nâng cao”.</p>' : ''}<div class="actions setup-actions"><button class="secondary" id="cancel-wizard">${closeLabel}</button><button class="secondary" id="manual-setup">Cấu hình nâng cao</button><button class="secondary" id="scan-setup">${scan || setupScanAttempted ? 'Quét lại' : 'Quét máy in'}</button><button class="primary" id="setup-next">Tiếp tục</button></div></section>`;
+  }
+
+  if (printerSetupStep === 2) {
+    return `<section class="card editor setup-wizard" id="printer-setup">${progress}<p class="eyebrow">Bước 2 / 3</p><h2>Đặt tên và chọn loại phiếu</h2><p class="muted">Gateway sẽ tự tạo hàng đợi in cho thiết bị đã chọn.</p><div class="setup-device-summary"><span>Máy in</span><strong>${esc(selectedDevice?.description || selectedDevice?.uri || printer.cups_device_uri)}</strong><button class="secondary mini" id="setup-change-device">Đổi máy</button></div><form id="printer-setup-form" class="form-stack"><div class="field"><label for="setup-name">Tên máy in</label><input id="setup-name" name="name" value="${esc(printer.name)}" placeholder="Ví dụ: Máy in hóa đơn" required /></div><div class="grid-2"><div class="field"><label for="setup-role">Dùng để in</label><select id="setup-role" name="role"><option value="receipt" ${printer.role === 'receipt' ? 'selected' : ''}>Hóa đơn</option><option value="kitchen" ${printer.role === 'kitchen' ? 'selected' : ''}>Phiếu bếp</option></select></div><div class="field"><label for="setup-paper">Khổ giấy</label><select id="setup-paper" name="paper_width_mm"><option value="80" ${printer.paper_width_mm !== 58 ? 'selected' : ''}>80 mm</option><option value="58" ${printer.paper_width_mm === 58 ? 'selected' : ''}>58 mm</option></select></div></div><div class="actions setup-actions"><button class="secondary" id="cancel-wizard" type="button">${closeLabel}</button><button class="secondary" id="setup-back" type="button">Quay lại</button><button class="primary" type="submit">Lưu và tiếp tục</button></div></form></section>`;
+  }
+
+  if (printerSetupStep === 3) {
+    const printLabel = printer.role === 'kitchen' ? 'phiếu bếp' : 'hóa đơn';
+    return `<section class="card editor setup-wizard" id="printer-setup">${progress}<p class="eyebrow">Bước 3 / 3</p><h2>In thử để kiểm tra</h2><p class="muted">Máy in đã được lưu. Bấm nút bên dưới để gửi một ${printLabel} thử.</p><div class="setup-device-summary"><span>${esc(printer.name)}</span><strong>Chưa in thử</strong></div><div class="actions setup-actions"><button class="secondary" id="cancel-wizard">Đóng</button><button class="secondary" id="setup-skip">Để sau</button><button class="primary" id="setup-test">In thử ${printLabel}</button></div></section>`;
+  }
+
+  return `<section class="card editor setup-wizard setup-complete" id="printer-setup">${progress}<p class="eyebrow">Thiết lập xong</p><h2>Máy in đã được thêm</h2><p class="muted">${setupTestPassed ? 'Phiếu in thử đã được gửi thành công.' : 'Máy in đã được lưu. Anh có thể in thử sau từ danh sách máy in.'}</p><button class="primary" id="setup-finish">Hoàn tất</button></section>`;
+}
+
 function renderEditor(printer: Printer): string {
+  if (printerSetupStep > 0) return renderPrinterSetupWizard(printer);
   const option = (value: string, label: string, selected: boolean) => `<option value="${value}" ${selected ? 'selected' : ''}>${label}</option>`;
   const devices = scan?.devices.map((item) => `<option value="${esc(item.uri)}">${esc(item.uri)}</option>`).join('') ?? '';
   const models = scan?.models.map((item) => `<option value="${esc(item.name)}">${esc(item.name)} — ${esc(item.description)}</option>`).join('') ?? '';
@@ -235,17 +266,130 @@ function renderEditor(printer: Printer): string {
 function bindDashboardEvents(): void {
   document.querySelector<HTMLButtonElement>('#logout')?.addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST', body: '{}' }).catch(() => undefined); gatewayStatus = null; renderLogin(); });
   document.querySelector<HTMLButtonElement>('#refresh')?.addEventListener('click', () => void run(loadDashboard));
-  document.querySelector<HTMLButtonElement>('#new-printer')?.addEventListener('click', () => { editing = { id: '', name: '', connection_type: 'usb', protocol: 'escpos', port: 9100, printer_model: 'raw', role: 'receipt', area: '', station: '', paper_width_mm: 80, cut: true, beep: false, cash_drawer: false, enabled: true }; renderDashboard(); document.querySelector('#editor')?.scrollIntoView({ behavior: 'smooth' }); });
-  document.querySelector<HTMLButtonElement>('#scan')?.addEventListener('click', () => void run(async () => { const result = await api<CupsScan & { ok: boolean }>('/api/cups/scan', { method: 'POST', body: '{}' }); scan = result; renderDashboard(); showToast('Đã quét CUPS.'); }));
+  document.querySelector<HTMLButtonElement>('#new-printer')?.addEventListener('click', startPrinterSetup);
+  document.querySelector<HTMLButtonElement>('#scan')?.addEventListener('click', () => void run(async () => { const result = await api<CupsScan & { ok: boolean }>('/api/cups/scan', { method: 'POST', body: '{}' }); scan = result; renderDashboard(); document.querySelector<HTMLDetailsElement>('.settings-disclosure')?.setAttribute('open', ''); showToast('Đã quét CUPS.'); }));
+  document.querySelector<HTMLButtonElement>('#scan-setup')?.addEventListener('click', () => void scanSetupDevices());
+  document.querySelector<HTMLButtonElement>('#setup-next')?.addEventListener('click', () => {
+    const deviceUri = document.querySelector<HTMLSelectElement>('#setup-device')?.value;
+    if (!deviceUri || !editing) { showToast('Hãy chọn máy in trước.', true); return; }
+    editing = { ...editing, cups_device_uri: deviceUri };
+    printerSetupStep = 2;
+    renderDashboard();
+    document.querySelector('#printer-setup')?.scrollIntoView({ behavior: 'smooth' });
+  });
+  document.querySelector<HTMLButtonElement>('#setup-back')?.addEventListener('click', () => { printerSetupStep = 1; renderDashboard(); });
+  document.querySelector<HTMLButtonElement>('#setup-change-device')?.addEventListener('click', () => { printerSetupStep = 1; renderDashboard(); });
+  document.querySelector<HTMLButtonElement>('#manual-setup')?.addEventListener('click', () => { printerSetupStep = 0; renderDashboard(); document.querySelector('#editor')?.scrollIntoView({ behavior: 'smooth' }); });
+  document.querySelector<HTMLButtonElement>('#cancel-wizard')?.addEventListener('click', closePrinterSetup);
+  document.querySelector<HTMLFormElement>('#printer-setup-form')?.addEventListener('submit', (event) => void saveWizardPrinter(event));
+  document.querySelector<HTMLButtonElement>('#setup-test')?.addEventListener('click', () => void testSetupPrinter());
+  document.querySelector<HTMLButtonElement>('#setup-skip')?.addEventListener('click', () => { setupTestPassed = false; printerSetupStep = 4; renderDashboard(); void run(loadDashboard); });
+  document.querySelector<HTMLButtonElement>('#setup-finish')?.addEventListener('click', closePrinterSetup);
   document.querySelector<HTMLFormElement>('#print-profile-form')?.addEventListener('submit', (event) => void savePrintProfile(event));
   document.querySelector<HTMLButtonElement>('#import-store-profile')?.addEventListener('click', () => void importStoreProfile());
   document.querySelectorAll<HTMLButtonElement>('[data-preview]').forEach((button) => button.addEventListener('click', () => void previewPrint(button.dataset.preview as 'receipt' | 'kitchen')));
-  document.querySelector<HTMLButtonElement>('#cancel-editor')?.addEventListener('click', () => { editing = null; renderDashboard(); });
+  document.querySelector<HTMLButtonElement>('#cancel-editor')?.addEventListener('click', () => { editing = null; printerSetupStep = 0; renderDashboard(); });
   document.querySelector<HTMLFormElement>('#printer-form')?.addEventListener('submit', (event) => void savePrinter(event));
   document.querySelector<HTMLButtonElement>('#setup-queue')?.addEventListener('click', () => void setupQueue());
-  document.querySelectorAll<HTMLButtonElement>('[data-edit]').forEach((button) => button.addEventListener('click', () => { editing = printers.find((item) => item.id === button.dataset.edit) ?? null; renderDashboard(); document.querySelector('#editor')?.scrollIntoView({ behavior: 'smooth' }); }));
+  document.querySelectorAll<HTMLButtonElement>('[data-edit]').forEach((button) => button.addEventListener('click', () => { editing = printers.find((item) => item.id === button.dataset.edit) ?? null; printerSetupStep = 0; renderDashboard(); document.querySelector('#editor')?.scrollIntoView({ behavior: 'smooth' }); }));
   document.querySelectorAll<HTMLButtonElement>('[data-delete]').forEach((button) => button.addEventListener('click', () => void deletePrinter(button.dataset.delete ?? '')));
   document.querySelectorAll<HTMLButtonElement>('[data-test]').forEach((button) => button.addEventListener('click', () => void testPrinter(button.dataset.id ?? '', button.dataset.test ?? '')));
+}
+
+function startPrinterSetup(): void {
+  editing = { id: '', name: '', connection_type: 'usb', protocol: 'escpos', port: 9100, printer_model: 'raw', role: 'receipt', area: '', station: '', paper_width_mm: 80, cut: true, beep: false, cash_drawer: false, enabled: true };
+  printerSetupStep = 1;
+  setupTestPassed = false;
+  setupScanAttempted = false;
+  scan = null;
+  renderDashboard();
+  document.querySelector('#printer-setup')?.scrollIntoView({ behavior: 'smooth' });
+  void scanSetupDevices();
+}
+
+async function scanSetupDevices(): Promise<void> {
+  setupScanAttempted = true;
+  await run(async () => {
+    scan = await api<CupsScan>('/api/cups/scan', { method: 'POST', body: '{}' });
+    const device = scan.devices.find((item) => /^(usb|bluetooth):/i.test(item.uri));
+    if (editing && !editing.cups_device_uri && device) editing = { ...editing, cups_device_uri: device.uri };
+    if (device) showToast(`Đã tìm thấy ${scan.devices.filter((item) => /^(usb|bluetooth):/i.test(item.uri)).length} thiết bị.`);
+  });
+  renderDashboard();
+  document.querySelector('#printer-setup')?.scrollIntoView({ behavior: 'smooth' });
+}
+
+function closePrinterSetup(): void {
+  const refresh = Boolean(editing?.id);
+  editing = null;
+  printerSetupStep = 0;
+  setupTestPassed = false;
+  renderDashboard();
+  if (refresh) void run(loadDashboard);
+}
+
+async function saveWizardPrinter(event: SubmitEvent): Promise<void> {
+  event.preventDefault();
+  if (!editing) return;
+  const form = event.currentTarget as HTMLFormElement;
+  const data = new FormData(form);
+  const device = scan?.devices.find((item) => item.uri === editing?.cups_device_uri);
+  if (!device) {
+    showToast('Thiết bị không còn trong danh sách. Hãy quét lại máy in.', true);
+    printerSetupStep = 1;
+    renderDashboard();
+    return;
+  }
+
+  const queue = editing.cups_queue || `airpos_${Date.now().toString(36)}`;
+  const connectionType = /^usb:/i.test(device.uri) ? 'usb' : 'bluetooth';
+  const name = String(data.get('name') ?? '').trim();
+  if (!name) { showToast('Nhập tên máy in để tiếp tục.', true); return; }
+  const role = data.get('role') === 'kitchen' ? 'kitchen' : 'receipt';
+  const paperWidth = Number(data.get('paper_width_mm')) === 58 ? 58 : 80;
+  const payload: Json = {
+    name,
+    connection_type: connectionType,
+    protocol: 'escpos',
+    paper_width_mm: paperWidth,
+    cups_queue: queue,
+    cups_device_uri: device.uri,
+    printer_model: 'raw',
+    host: null,
+    port: 9100,
+    role,
+    area: '',
+    station: '',
+    cut: true,
+    beep: false,
+    cash_drawer: false,
+    enabled: true,
+  };
+  editing = { ...editing, name, connection_type: connectionType, protocol: 'escpos', paper_width_mm: paperWidth, cups_queue: queue, cups_device_uri: device.uri, printer_model: 'raw', role };
+  await run(async () => {
+    const id = editing?.id;
+    const saved = await api<{ printer: Printer }>(id ? `/api/printers/${encodeURIComponent(id)}` : '/api/printers', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    editing = saved.printer;
+    await api(`/api/printers/${encodeURIComponent(saved.printer.id)}/setup-queue`, { method: 'POST', body: JSON.stringify({ queue, device_uri: device.uri, model: 'raw' }) });
+    printerSetupStep = 3;
+    showToast('Đã lưu máy in. Bây giờ hãy in thử để kiểm tra.');
+  });
+  renderDashboard();
+  document.querySelector('#printer-setup')?.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function testSetupPrinter(): Promise<void> {
+  if (!editing?.id) return;
+  const action = editing.role === 'kitchen' ? 'kitchen' : 'receipt';
+  let testSent = false;
+  await run(async () => {
+    await api(`/api/printers/${encodeURIComponent(editing!.id)}/test`, { method: 'POST', body: JSON.stringify({ action }) });
+    setupTestPassed = true;
+    printerSetupStep = 4;
+    testSent = true;
+    showToast('In thử thành công.');
+  });
+  if (testSent) { renderDashboard(); void run(loadDashboard); }
 }
 
 async function savePrintProfile(event: SubmitEvent): Promise<void> {
